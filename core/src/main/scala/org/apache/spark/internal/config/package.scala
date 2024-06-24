@@ -2019,6 +2019,7 @@ package object config {
       .timeConf(TimeUnit.MILLISECONDS)
       .createOptional
 
+  // spark 推测执行选项
   private[spark] val SPECULATION_ENABLED =
     ConfigBuilder("spark.speculation")
       .version("0.6.0")
@@ -2158,11 +2159,9 @@ package object config {
 
   private[spark] val PUSH_BASED_SHUFFLE_ENABLED =
     ConfigBuilder("spark.shuffle.push.enabled")
-      .doc("Set to true to enable push-based shuffle on the client side and this works in " +
-        "conjunction with the server side flag" +
-        " spark.shuffle.push.server.mergedShuffleFileManagerImpl which needs to be set with" +
-        " the appropriate org.apache.spark.network.shuffle.MergedShuffleFileManager" +
-        " implementation for push-based shuffle to be enabled")
+      .doc("将其设置为true以在客户端启用基于推送的shuffle，并且这与服务器端标志spark.shuffle.push.server.mergedShuffleFileManagerImpl配合使用，" +
+        "该标志需要设置为适当的org.apache.spark.network.shuffle.MergedShuffleFileManager实现，" +
+        "以启用基于推送的shuffle。")
       .version("3.2.0")
       .booleanConf
       .createWithDefault(false)

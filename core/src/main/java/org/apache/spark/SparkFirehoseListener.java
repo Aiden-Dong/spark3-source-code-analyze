@@ -21,16 +21,11 @@ import org.apache.spark.annotation.DeveloperApi;
 import org.apache.spark.scheduler.*;
 
 /**
- * Class that allows users to receive all SparkListener events.
- * Users should override the onEvent method.
+ * 允许用户接收所有 SparkListener 事件的类。用户应该重写 onEvent 方法。
+ * 这是一个具体的 Java 类，以确保在向 SparkListener 添加新方法时不会忘记更新它：
+ * 忘记添加方法会导致编译错误（如果这是一个具体的 Scala 类，新事件处理程序的默认实现将从 SparkListener 特性继承）。
  *
- * This is a concrete Java class in order to ensure that we don't forget to update it when adding
- * new methods to SparkListener: forgetting to add a method will result in a compilation error (if
- * this was a concrete Scala class, default implementations of new event handlers would be inherited
- * from the SparkListener trait).
- *
- * Please note until Spark 3.1.0 this was missing the DevelopApi annotation, this needs to be
- * taken into account if changing this API before a major release.
+ * 请注意，直到 Spark 3.1.0，这个类缺少 DevelopApi 注解，如果在主要发布之前更改此 API，需要考虑这一点。
  */
 @DeveloperApi
 public class SparkFirehoseListener implements SparkListenerInterface {

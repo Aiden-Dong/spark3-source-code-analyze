@@ -400,7 +400,7 @@ abstract class TreeNode[BaseType <: TreeNode[BaseType]] extends Product with Tre
   }
 
   /**
-   * Returns a Seq containing the leaves in this tree.
+   * 返回一个包含此树中所有叶节点的序列 (Seq)。
    */
   def collectLeaves(): Seq[BaseType] = {
     this.collect { case p if p.children.isEmpty => p }

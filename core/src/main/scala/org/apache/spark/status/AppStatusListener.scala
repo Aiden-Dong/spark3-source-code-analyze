@@ -37,8 +37,8 @@ import org.apache.spark.ui.SparkUI
 import org.apache.spark.ui.scope._
 
 /**
- * A Spark listener that writes application information to a data store. The types written to the
- * store are defined in the `storeTypes.scala` file and are based on the public REST API.
+ * 一个将应用程序信息写入数据存储的 Spark 监听器。
+ * 写入存储的数据类型在 storeTypes.scala 文件中定义，并基于公共 REST API。
  *
  * @param lastUpdateTime When replaying logs, the log's last update time, so that the duration of
  *                       unfinished tasks can be more accurately calculated (see SPARK-21922).
@@ -50,19 +50,19 @@ private[spark] class AppStatusListener(
     appStatusSource: Option[AppStatusSource] = None,
     lastUpdateTime: Option[Long] = None) extends SparkListener with Logging {
 
-  private var sparkVersion = SPARK_VERSION
-  private var appInfo: v1.ApplicationInfo = null
-  private var appSummary = new AppSummary(0, 0)
+  private var sparkVersion = SPARK_VERSION               // Spark 版本信息
+  private var appInfo: v1.ApplicationInfo = null         // Application 信息
+  private var appSummary = new AppSummary(0, 0)   // App 统计信息
   private var defaultCpusPerTask: Int = 1
 
-  // How often to update live entities. -1 means "never update" when replaying applications,
-  // meaning only the last write will happen. For live applications, this avoids a few
-  // operations that we can live without when rapidly processing incoming task events.
+  // 更新实时实体的频率。-1 表示在重放应用程序时“从不更新”，
+  // 意味着只有最后一次写入会发生。
+  // 对于实时应用程序，这避免了一些在快速处理传入任务事件时可以忽略的操作。
   private val liveUpdatePeriodNs = if (live) conf.get(LIVE_ENTITY_UPDATE_PERIOD) else -1L
 
   /**
-   * Minimum time elapsed before stale UI data is flushed. This avoids UI staleness when incoming
-   * task events are not fired frequently.
+   * 在清除过时的 UI 数据之前的最短时间间隔。
+   * 这样可以避免在传入的任务事件不频繁触发时出现 UI 过时现象。
    */
   private val liveUpdateMinFlushPeriod = conf.get(LIVE_ENTITY_UPDATE_MIN_FLUSH_PERIOD)
 

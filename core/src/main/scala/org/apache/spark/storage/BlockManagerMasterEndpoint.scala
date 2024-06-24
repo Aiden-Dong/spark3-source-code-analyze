@@ -599,10 +599,8 @@ class BlockManagerMasterEndpoint(
 
       val externalShuffleServiceBlockStatus =
         if (externalShuffleServiceRddFetchEnabled) {
-          // The blockStatusByShuffleService entries are never removed as they belong to the
-          // external shuffle service instances running on the cluster nodes. To decrease its
-          // memory footprint when all the disk persisted blocks are removed for a shuffle service
-          // BlockStatusPerBlockId releases the backing HashMap.
+          // blockStatusByShuffleService条目永远不会被删除，因为它们属于运行在集群节点上的外部洗牌服务实例。为了减少其内存占用，
+          // 在为洗牌服务删除了所有磁盘持久化块时，BlockStatusPerBlockId释放了支持的HashMap。
           val externalShuffleServiceBlocks = blockStatusByShuffleService
             .getOrElseUpdate(externalShuffleServiceIdOnHost(id), new BlockStatusPerBlockId)
           Some(externalShuffleServiceBlocks)

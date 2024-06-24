@@ -25,30 +25,24 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, IntegerType}
 
 /**
- * Specifies how tuples that share common expressions will be distributed when a query is executed
- * in parallel on many machines.
- *
- * Distribution here refers to inter-node partitioning of data. That is, it describes how tuples
- * are partitioned across physical machines in a cluster. Knowing this property allows some
- * operators (e.g., Aggregate) to perform partition local operations instead of global ones.
+ * 指定在查询在多台机器上并行执行时，共享相同表达式的元组将如何分布。
+ * 这里的分布是指 数据的节点间分区。
+ * 也就是说，它描述了元组在集群中的物理机器上如何分区。
+ * 了解此属性使一些操作符（例如，聚合）能够执行分区本地操作而不是全局操作。
  */
 sealed trait Distribution {
   /**
-   * The required number of partitions for this distribution. If it's None, then any number of
-   * partitions is allowed for this distribution.
+   * 此分布所需的分区数量。如果为 None，则此分布允许任意数量的分区。
    */
   def requiredNumPartitions: Option[Int]
 
   /**
-   * Creates a default partitioning for this distribution, which can satisfy this distribution while
-   * matching the given number of partitions.
+   * 创建此分布的默认分区方案，该方案可以满足此分布并匹配给定数量的分区。
    */
   def createPartitioning(numPartitions: Int): Partitioning
 }
 
-/**
- * Represents a distribution where no promises are made about co-location of data.
- */
+// 表示一个分布，关于数据的共同位置没有做出任何承诺。
 case object UnspecifiedDistribution extends Distribution {
   override def requiredNumPartitions: Option[Int] = None
 
@@ -57,10 +51,7 @@ case object UnspecifiedDistribution extends Distribution {
   }
 }
 
-/**
- * Represents a distribution that only has a single partition and all tuples of the dataset
- * are co-located.
- */
+// 表示仅具有单个分区且数据集的所有元组均共同位于其中的分布。
 case object AllTuples extends Distribution {
   override def requiredNumPartitions: Option[Int] = Some(1)
 
@@ -71,11 +62,12 @@ case object AllTuples extends Distribution {
 }
 
 /**
- * Represents data where tuples that share the same values for the `clustering`
- * [[Expression Expressions]] will be co-located in the same partition.
  *
- * @param requireAllClusterKeys When true, `Partitioning` which satisfies this distribution,
- *                              must match all `clustering` expressions in the same ordering.
+ * 表示共享相同clustering值的元组的数据
+ * [[Expression Expressions]] 将共享相同clustering值的元组放置在同一分区中
+ *
+ * @param requireAllClusterKeys 当为 true 时，
+ *                              满足此分布的 Partitioning 必须按照相同的顺序匹配所有的 clustering 表达式。
  */
 case class ClusteredDistribution(
     clustering: Seq[Expression],
@@ -96,10 +88,8 @@ case class ClusteredDistribution(
   }
 
   /**
-   * Checks if `expressions` match all `clustering` expressions in the same ordering.
-   *
-   * `Partitioning` should call this to check its expressions when `requireAllClusterKeys`
-   * is set to true.
+   * 检查 expressions 是否按照相同的顺序匹配所有的 clustering 表达式。
+   * 当 requireAllClusterKeys 设置为 true 时，Partitioning 应该调用此方法来检查其表达式。
    */
   def areAllClusterKeysMatched(expressions: Seq[Expression]): Boolean = {
     expressions.length == clustering.length &&
@@ -110,24 +100,19 @@ case class ClusteredDistribution(
 }
 
 /**
- * Represents the requirement of distribution on the stateful operator in Structured Streaming.
+ * 表示对结构化流式处理中有状态操作符的分布要求。
+ * 每个有状态操作符中的分区都初始化状态存储（state store），这些状态存储与其他分区中的状态存储是独立的。
+ * 由于无法对状态存储中的数据进行重新分区，因此 Spark 应该确保有状态操作符的物理分区在不同的 Spark 版本中保持不变。
+ * 违反此要求可能会带来潜在的正确性问题。
  *
- * Each partition in stateful operator initializes state store(s), which are independent with state
- * store(s) in other partitions. Since it is not possible to repartition the data in state store,
- * Spark should make sure the physical partitioning of the stateful operator is unchanged across
- * Spark versions. Violation of this requirement may bring silent correctness issue.
+ * 由于此分布依赖于对有状态操作符的物理分区进行的 [[HashPartitioning]]，
+ * 因此只有 [[HashPartitioning]]（以及 [[PartitioningCollection]] 中的 HashPartitioning）可以满足此分布。
+ * 当 _requiredNumPartitions 为 1 时，[[SinglePartition]] 本质上与 [[HashPartitioning]] 相同，因此它也可以满足此分布。
  *
- * Since this distribution relies on [[HashPartitioning]] on the physical partitioning of the
- * stateful operator, only [[HashPartitioning]] (and HashPartitioning in
- * [[PartitioningCollection]]) can satisfy this distribution.
- * When `_requiredNumPartitions` is 1, [[SinglePartition]] is essentially same as
- * [[HashPartitioning]], so it can satisfy this distribution as well.
- *
- * NOTE: This is applied only to stream-stream join as of now. For other stateful operators, we
- * have been using ClusteredDistribution, which could construct the physical partitioning of the
- * state in different way (ClusteredDistribution requires relaxed condition and multiple
- * partitionings can satisfy the requirement.) We need to construct the way to fix this with
- * minimizing possibility to break the existing checkpoints.
+ * 注意：目前此分布仅适用于流-流连接。
+ * 对于其他有状态操作符，我们一直使用 ClusteredDistribution，
+ * 该分布可以以不同的方式构造状态的物理分区（ClusteredDistribution 需要放松条件，多个分区方案可以满足要求）。
+ * 我们需要构建一种方法来修复此问题，并尽量减少破坏现有检查点的可能性。
  *
  * TODO(SPARK-38204): address the issue explained in above note.
  */
@@ -151,13 +136,10 @@ case class StatefulOpClusteredDistribution(
 }
 
 /**
- * Represents data where tuples have been ordered according to the `ordering`
- * [[Expression Expressions]]. Its requirement is defined as the following:
- *   - Given any 2 adjacent partitions, all the rows of the second partition must be larger than or
- *     equal to any row in the first partition, according to the `ordering` expressions.
- *
- * In other words, this distribution requires the rows to be ordered across partitions, but not
- * necessarily within a partition.
+ * 表示数据已根据ordering[[Expression表达式]]排序的情况。
+ * 其要求定义如下：
+ *   - 给定任意两个相邻的分区，第二个分区的所有行必须根据ordering表达式大于或等于第一个分区中的任何行。
+ * 换句话说，此分布要求在分区之间对行进行排序，但不一定在分区内部排序。
  */
 case class OrderedDistribution(ordering: Seq[SortOrder]) extends Distribution {
   require(
@@ -174,8 +156,7 @@ case class OrderedDistribution(ordering: Seq[SortOrder]) extends Distribution {
 }
 
 /**
- * Represents data where tuples are broadcasted to every node. It is quite common that the
- * entire set of tuples is transformed into different data structure.
+ * 表示数据被广播到每个节点。通常整个元组集合被转换成不同的数据结构。
  */
 case class BroadcastDistribution(mode: BroadcastMode) extends Distribution {
   override def requiredNumPartitions: Option[Int] = Some(1)
@@ -188,45 +169,40 @@ case class BroadcastDistribution(mode: BroadcastMode) extends Distribution {
 }
 
 /**
- * Describes how an operator's output is split across partitions. It has 2 major properties:
- *   1. number of partitions.
- *   2. if it can satisfy a given distribution.
+ * 描述了操作符输出在分区间如何分割的方式。它有两个主要属性：
+ * 1. 分区的数量。
+ * 2. 是否能够满足给定的分布。
  */
 trait Partitioning {
-  /** Returns the number of partitions that the data is split across */
+  // 分区数量
   val numPartitions: Int
 
   /**
-   * Returns true iff the guarantees made by this [[Partitioning]] are sufficient
-   * to satisfy the partitioning scheme mandated by the `required` [[Distribution]],
-   * i.e. the current dataset does not need to be re-partitioned for the `required`
-   * Distribution (it is possible that tuples within a partition need to be reorganized).
+   * 当且仅当此[[Partitioning]]所提供的保证足以满足required [[Distribution]]所规定的分区方案时返回true，
+   * 即当前数据集不需要重新分区以满足 required Distribution（可能需要对分区内的元组进行重新组织）。
    *
-   * A [[Partitioning]] can never satisfy a [[Distribution]] if its `numPartitions` doesn't match
-   * [[Distribution.requiredNumPartitions]].
+   * 如果numPartitions不匹配[[Distribution.requiredNumPartitions]]，
+   * 则[[Partitioning]]永远无法满足[[Distribution]]。
    */
   final def satisfies(required: Distribution): Boolean = {
     required.requiredNumPartitions.forall(_ == numPartitions) && satisfies0(required)
   }
 
   /**
-   * Creates a shuffle spec for this partitioning and its required distribution. The
-   * spec is used in the scenario where an operator has multiple children (e.g., join), and is
-   * used to decide whether this child is co-partitioned with others, therefore whether extra
-   * shuffle shall be introduced.
+   * 为此分区和其所需的分布创建一个洗牌规范。
+   *   该规范用于以下场景：操作符有多个子操作符（例如，join），
+   *                    并用于决定此子操作符是否与其他操作符共同分区，因此是否需要引入额外的洗牌。
    *
-   * @param distribution the required clustered distribution for this partitioning
+   * @param distribution 此分区所需的聚集分布
    */
   def createShuffleSpec(distribution: ClusteredDistribution): ShuffleSpec =
     throw new IllegalStateException(s"Unexpected partitioning: ${getClass.getSimpleName}")
 
   /**
-   * The actual method that defines whether this [[Partitioning]] can satisfy the given
-   * [[Distribution]], after the `numPartitions` check.
+   * 在numPartitions检查之后，实际定义此[[Partitioning]]是否可以满足给定的[[Distribution]]的方法。
    *
-   * By default a [[Partitioning]] can satisfy [[UnspecifiedDistribution]], and [[AllTuples]] if
-   * the [[Partitioning]] only have one partition. Implementations can also overwrite this method
-   * with special logic.
+   * 默认情况下，如果[[Partitioning]]只有一个分区，则可以满足[[UnspecifiedDistribution]]和[[AllTuples]]。
+   * 实现还可以使用特殊逻辑覆盖此方法。
    */
   protected def satisfies0(required: Distribution): Boolean = required match {
     case UnspecifiedDistribution => true
@@ -238,9 +214,8 @@ trait Partitioning {
 case class UnknownPartitioning(numPartitions: Int) extends Partitioning
 
 /**
- * Represents a partitioning where rows are distributed evenly across output partitions
- * by starting from a random target partition number and distributing rows in a round-robin
- * fashion. This partitioning is used when implementing the DataFrame.repartition() operator.
+ * 表示一种分区方式，其中行通过从随机目标分区号开始并以轮询方式分配行，均匀分布在输出分区上。
+ * 在实现DataFrame.repartition()操作符时使用此分区方式。
  */
 case class RoundRobinPartitioning(numPartitions: Int) extends Partitioning
 
@@ -257,14 +232,12 @@ case object SinglePartition extends Partitioning {
 }
 
 /**
- * Represents a partitioning where rows are split up across partitions based on the hash
- * of `expressions`.  All rows where `expressions` evaluate to the same values are guaranteed to be
- * in the same partition.
+ * 表示一种分区方式，其中行根据expressions的哈希值分割到不同的分区中。
+ * 所有expressions计算结果相同的行保证在同一个分区中。
  *
- * Since [[StatefulOpClusteredDistribution]] relies on this partitioning and Spark requires
- * stateful operators to retain the same physical partitioning during the lifetime of the query
- * (including restart), the result of evaluation on `partitionIdExpression` must be unchanged
- * across Spark versions. Violation of this requirement may bring silent correctness issue.
+ * 由于[[StatefulOpClusteredDistribution]]依赖于此分区方式，并且 Spark 要求有状态的操作符在查询的生命周期内（包括重新启动）保持相同的物理分区，
+ * 因此对partitionIdExpression进行评估的结果在不同的 Spark 版本中必须保持不变。
+ * 违反此要求可能会引发潜在的正确性问题。
  */
 case class HashPartitioning(expressions: Seq[Expression], numPartitions: Int)
   extends Expression with Partitioning with Unevaluable {
@@ -282,8 +255,7 @@ case class HashPartitioning(expressions: Seq[Expression], numPartitions: Int)
           }
         case c @ ClusteredDistribution(requiredClustering, requireAllClusterKeys, _) =>
           if (requireAllClusterKeys) {
-            // Checks `HashPartitioning` is partitioned on exactly same clustering keys of
-            // `ClusteredDistribution`.
+            // 检查 HashPartitioning 是否精确分区在与 ClusteredDistribution 的完全相同的聚集键上。
             c.areAllClusterKeysMatched(expressions)
           } else {
             expressions.forall(x => requiredClustering.exists(_.semanticEquals(x)))
@@ -297,8 +269,7 @@ case class HashPartitioning(expressions: Seq[Expression], numPartitions: Int)
     HashShuffleSpec(this, distribution)
 
   /**
-   * Returns an expression that will produce a valid partition ID(i.e. non-negative and is less
-   * than numPartitions) based on hashing expressions.
+   * 返回一个表达式，根据哈希表达式生成一个有效的分区ID（即非负且小于numPartitions）。
    */
   def partitionIdExpression: Expression = Pmod(new Murmur3Hash(expressions), Literal(numPartitions))
 
@@ -307,24 +278,18 @@ case class HashPartitioning(expressions: Seq[Expression], numPartitions: Int)
 }
 
 /**
- * Represents a partitioning where rows are split across partitions based on transforms defined
- * by `expressions`. `partitionValuesOpt`, if defined, should contain value of partition key(s) in
- * ascending order, after evaluated by the transforms in `expressions`, for each input partition.
- * In addition, its length must be the same as the number of input partitions (and thus is a 1-1
- * mapping), and each row in `partitionValuesOpt` must be unique.
+ * 表示一种分区方式，其中行根据expressions中定义的转换进行分割到不同的分区中。
+ * 如果定义了partitionValuesOpt，则应包含每个输入分区中的分区键值（经过expressions中的转换评估后）以升序排列的值。
+ * 此外，其长度必须与输入分区的数量相同（因此是一一映射），并且partitionValuesOpt中的每一行必须是唯一的。
  *
- * For example, if `expressions` is `[years(ts_col)]`, then a valid value of `partitionValuesOpt` is
- * `[0, 1, 2]`, which represents 3 input partitions with distinct partition values. All rows
- * in each partition have the same value for column `ts_col` (which is of timestamp type), after
- * being applied by the `years` transform.
+ * 例如，如果expressions是[years(ts_col)]，那么partitionValuesOpt的一个有效值是[0, 1, 2]，它表示具有不同分区值的3个输入分区。
+ * 每个分区中的所有行在应用years转换后对列 ts_col（时间戳类型）具有相同的值。
  *
- * On the other hand, `[0, 0, 1]` is not a valid value for `partitionValuesOpt` since `0` is
- * duplicated twice.
+ * 另一方面，[0, 0, 1]不是partitionValuesOpt的有效值，因为0重复了两次。.
  *
- * @param expressions partition expressions for the partitioning.
- * @param numPartitions the number of partitions
- * @param partitionValuesOpt if set, the values for the cluster keys of the distribution, must be
- *                           in ascending order.
+ * @param expressions 分区的分区表达式.
+ * @param numPartitions 分区的数量
+ * @param partitionValuesOpt  如果设置了，分布的聚集键的值，必须以升序排.
  */
 case class KeyGroupedPartitioning(
     expressions: Seq[Expression],
@@ -336,8 +301,7 @@ case class KeyGroupedPartitioning(
       required match {
         case c @ ClusteredDistribution(requiredClustering, requireAllClusterKeys, _) =>
           if (requireAllClusterKeys) {
-            // Checks whether this partitioning is partitioned on exactly same clustering keys of
-            // `ClusteredDistribution`.
+            // 检查此分区是否精确地在 ClusteredDistribution 的完全相同的聚集键上分区。
             c.areAllClusterKeysMatched(expressions)
           } else {
             // We'll need to find leaf attributes from the partition expressions first.
@@ -364,16 +328,11 @@ object KeyGroupedPartitioning {
 }
 
 /**
- * Represents a partitioning where rows are split across partitions based on some total ordering of
- * the expressions specified in `ordering`.  When data is partitioned in this manner, it guarantees:
- * Given any 2 adjacent partitions, all the rows of the second partition must be larger than any row
- * in the first partition, according to the `ordering` expressions.
- *
- * This is a strictly stronger guarantee than what `OrderedDistribution(ordering)` requires, as
- * there is no overlap between partitions.
- *
- * This class extends expression primarily so that transformations over expression will descend
- * into its child.
+ * 表示一种分区方式，其中行根据在ordering中指定的表达式的某种总排序而分割到不同的分区中。
+ * 当数据以这种方式分区时，它保证：
+ * - 给定任意两个相邻的分区，第二个分区的所有行必须根据ordering表达式大于第一个分区中的任何行。
+ * - 这是比OrderedDistribution(ordering)要求的要强的保证，因为分区之间不存在重叠。
+ * 此类主要扩展了表达式，以便表达式上的转换会下降到其子节点。
  */
 case class RangePartitioning(ordering: Seq[SortOrder], numPartitions: Int)
   extends Expression with Partitioning with Unevaluable {
@@ -386,22 +345,18 @@ case class RangePartitioning(ordering: Seq[SortOrder], numPartitions: Int)
     super.satisfies0(required) || {
       required match {
         case OrderedDistribution(requiredOrdering) =>
-          // If `ordering` is a prefix of `requiredOrdering`:
-          //   Let's say `ordering` is [a, b] and `requiredOrdering` is [a, b, c]. According to the
-          //   RangePartitioning definition, any [a, b] in a previous partition must be smaller
-          //   than any [a, b] in the following partition. This also means any [a, b, c] in a
-          //   previous partition must be smaller than any [a, b, c] in the following partition.
-          //   Thus `RangePartitioning(a, b)` satisfies `OrderedDistribution(a, b, c)`.
-          //
-          // If `requiredOrdering` is a prefix of `ordering`:
-          //   Let's say `ordering` is [a, b, c] and `requiredOrdering` is [a, b]. According to the
-          //   RangePartitioning definition, any [a, b, c] in a previous partition must be smaller
-          //   than any [a, b, c] in the following partition. If there is a [a1, b1] from a previous
-          //   partition which is larger than a [a2, b2] from the following partition, then there
-          //   must be a [a1, b1 c1] larger than [a2, b2, c2], which violates RangePartitioning
-          //   definition. So it's guaranteed that, any [a, b] in a previous partition must not be
-          //   greater(i.e. smaller or equal to) than any [a, b] in the following partition. Thus
-          //   `RangePartitioning(a, b, c)` satisfies `OrderedDistribution(a, b)`.
+          // 如果ordering是requiredOrdering的前缀：
+          // 假设ordering是[a, b]，requiredOrdering是[a, b, c]。
+          // 根据RangePartitioning的定义，任何前一个分区中的[a, b]必须小于后一个分区中的任何[a, b]。
+          // 这也意味着任何前一个分区中的[a, b, c]必须小于后一个分区中的任何[a, b, c]。
+          // 因此，RangePartitioning(a, b)满足OrderedDistribution(a, b, c)。
+
+          // 如果requiredOrdering是ordering的前缀：
+          // 假设ordering是[a, b, c]，requiredOrdering是[a, b]。
+          // 根据RangePartitioning的定义，任何前一个分区中的[a, b, c]必须小于后一个分区中的任何[a, b, c]。
+          // 如果有一个前一个分区中的[a1, b1]比后一个分区中的[a2, b2]大，那么一定有一个[a1, b1 c1]比[a2, b2, c2]大，这违反了RangePartitioning的定义。
+          // 因此，保证了任何前一个分区中的[a, b]不得大于（即小于或等于）后一个分区中的任何[a, b]。
+          // 因此，RangePartitioning(a, b, c)满足OrderedDistribution(a, b)。
           val minSize = Seq(requiredOrdering.size, ordering.size).min
           requiredOrdering.take(minSize) == ordering.take(minSize)
         case c @ ClusteredDistribution(requiredClustering, requireAllClusterKeys, _) =>
@@ -427,17 +382,14 @@ case class RangePartitioning(ordering: Seq[SortOrder], numPartitions: Int)
 }
 
 /**
- * A collection of [[Partitioning]]s that can be used to describe the partitioning
- * scheme of the output of a physical operator. It is usually used for an operator
- * that has multiple children. In this case, a [[Partitioning]] in this collection
- * describes how this operator's output is partitioned based on expressions from
- * a child. For example, for a Join operator on two tables `A` and `B`
- * with a join condition `A.key1 = B.key2`, assuming we use HashPartitioning schema,
- * there are two [[Partitioning]]s can be used to describe how the output of
- * this Join operator is partitioned, which are `HashPartitioning(A.key1)` and
- * `HashPartitioning(B.key2)`. It is also worth noting that `partitionings`
- * in this collection do not need to be equivalent, which is useful for
- * Outer Join operators.
+ * 一个包含[[Partitioning]]的集合，可用于描述物理操作符输出的分区方案。
+ * 通常用于具有多个子操作符的操作符。
+ * 在这种情况下，此集合中的一个[[Partitioning]]描述了此操作符输出如何根据来自子操作符的表达式进行分区。
+ *
+ * 例如，对于在两个表A和B上的连接操作符，假设使用哈希分区方案并且连接条件为 A.key1 = B.key2，那么有两个[[Partitioning]]可以用于描述此连接操作符的输出如何分区，
+ * 即HashPartitioning(A.key1)和HashPartitioning(B.key2)。
+ *
+ * 值得注意的是，此集合中的partitionings不需要是等价的，这对于外连接操作符很有用。
  */
 case class PartitioningCollection(partitionings: Seq[Partitioning])
   extends Expression with Partitioning with Unevaluable {
@@ -478,8 +430,7 @@ case class PartitioningCollection(partitionings: Seq[Partitioning])
 }
 
 /**
- * Represents a partitioning where rows are collected, transformed and broadcasted to each
- * node in the cluster.
+ * 表示一种分区方式，其中行被收集、转换并广播到集群中的每个节点。
  */
 case class BroadcastPartitioning(mode: BroadcastMode) extends Partitioning {
   override val numPartitions: Int = 1
@@ -492,44 +443,34 @@ case class BroadcastPartitioning(mode: BroadcastMode) extends Partitioning {
 }
 
 /**
- * This is used in the scenario where an operator has multiple children (e.g., join) and one or more
- * of which have their own requirement regarding whether its data can be considered as
- * co-partitioned from others. This offers APIs for:
- *
- *   - Comparing with specs from other children of the operator and check if they are compatible.
- *      When two specs are compatible, we can say their data are co-partitioned, and Spark will
- *      potentially be able to eliminate shuffle if necessary.
- *   - Creating a partitioning that can be used to re-partition another child, so that to make it
- *      having a compatible partitioning as this node.
+ * 这在操作符具有多个子节点（例如，连接操作）的情况下使用，其中一个或多个子节点对其数据是否可以被视为与其他数据共同分区具有自己的要求。
+ * 它提供了以下API：
+ *  - 与操作符的其他子节点的规范进行比较，并检查它们是否兼容。
+ *  当两个规范兼容时，我们可以说它们的数据是共同分区的，并且如果必要，Spark可能能够消除Shuffle。
+ * - 创建一个可用于重新分区另一个子节点的分区，以使其具有与此节点兼容的分区。
  */
 trait ShuffleSpec {
   /**
-   * Returns the number of partitions of this shuffle spec
+   * 返回此洗牌规范的分区数。
    */
   def numPartitions: Int
 
   /**
-   * Returns true iff this spec is compatible with the provided shuffle spec.
-   *
-   * A true return value means that the data partitioning from this spec can be seen as
-   * co-partitioned with the `other`, and therefore no shuffle is required when joining the two
-   * sides.
-   *
-   * Note that Spark assumes this to be reflexive, symmetric and transitive.
+   * 当前规范与提供的洗牌规范兼容时返回true。
+   * 返回true意味着来自此规范的数据分区可以被视为与“other”共同分区，因此在连接两个侧时不需要洗牌。
+   * 注意，Spark假定此操作是自反的、对称的和传递的。
    */
   def isCompatibleWith(other: ShuffleSpec): Boolean
 
   /**
-   * Whether this shuffle spec can be used to create partitionings for the other children.
+   * 此洗牌规范是否可以用于为其他子操作符创建分区方案。
    */
   def canCreatePartitioning: Boolean
 
   /**
-   * Creates a partitioning that can be used to re-partition the other side with the given
-   * clustering expressions.
-   *
-   * This will only be called when:
-   *  - [[isCompatibleWith]] returns false on the side where the `clustering` is from.
+   * 创建一个可以用于使用给定的聚类表达式重新分区另一侧的分区方案。
+   * 只有在以下情况下才会调用此方法：
+   * 当包含clustering的一侧的[[isCompatibleWith]]返回false时。
    */
   def createPartitioning(clustering: Seq[Expression]): Partitioning =
     throw new UnsupportedOperationException("Operation unsupported for " +
@@ -553,9 +494,8 @@ case class RangeShuffleSpec(
     numPartitions: Int,
     distribution: ClusteredDistribution) extends ShuffleSpec {
 
-  // `RangePartitioning` is not compatible with any other partitioning since it can't guarantee
-  // data are co-partitioned for all the children, as range boundaries are randomly sampled. We
-  // can't let `RangeShuffleSpec` to create a partitioning.
+  // RangePartitioning与任何其他分区方式都不兼容，因为它无法保证所有子节点的数据都是共同分区的，因为范围边界是随机抽样的。
+  // 我们不能让RangeShuffleSpec创建一个分区方案。
   override def canCreatePartitioning: Boolean = false
 
   override def isCompatibleWith(other: ShuffleSpec): Boolean = other match {
@@ -572,14 +512,13 @@ case class HashShuffleSpec(
     distribution: ClusteredDistribution) extends ShuffleSpec {
 
   /**
-   * A sequence where each element is a set of positions of the hash partition key to the cluster
-   * keys. For instance, if cluster keys are [a, b, b] and hash partition keys are [a, b], the
-   * result will be [(0), (1, 2)].
    *
-   * This is useful to check compatibility between two `HashShuffleSpec`s. If the cluster keys are
-   * [a, b, b] and [x, y, z] for the two join children, and the hash partition keys are
-   * [a, b] and [x, z], they are compatible. With the positions, we can do the compatibility check
-   * by looking at if the positions of hash partition keys from two sides have overlapping.
+   * 一个序列，其中每个元素是哈希分区键到集群键的位置集合。
+   * 例如，如果集群键是 [a, b, b]，哈希分区键是 [a, b]，结果将是 [(0), (1, 2)]。
+   *
+   * 这对于检查两个HashShuffleSpec之间的兼容性很有用。
+   * 如果两个连接子节点的集群键分别为 [a, b, b] 和 [x, y, z]，哈希分区键为 [a, b] 和 [x, z]，它们是兼容的。
+   * 通过位置，我们可以通过查看两侧的哈希分区键的位置是否重叠来进行兼容性检查。
    */
   lazy val hashKeyPositions: Seq[mutable.BitSet] = {
     val distKeyToPos = mutable.Map.empty[Expression, mutable.BitSet]
@@ -593,12 +532,11 @@ case class HashShuffleSpec(
     case SinglePartitionShuffleSpec =>
       partitioning.numPartitions == 1
     case otherHashSpec @ HashShuffleSpec(otherPartitioning, otherDistribution) =>
-      // we need to check:
-      //  1. both distributions have the same number of clustering expressions
-      //  2. both partitioning have the same number of partitions
-      //  3. both partitioning have the same number of expressions
-      //  4. each pair of partitioning expression from both sides has overlapping positions in their
-      //     corresponding distributions.
+      // 我们需要检查：
+      // 1. 两个分布具有相同数量的聚类表达式
+      // 2. 两个分区具有相同数量的分区
+      // 3. 两个分区具有相同数量的表达式
+      // 4. 两侧的每一对分区表达式在其相应的分布中具有重叠的位置。
       distribution.clustering.length == otherDistribution.clustering.length &&
       partitioning.numPartitions == otherPartitioning.numPartitions &&
       partitioning.expressions.length == otherPartitioning.expressions.length && {
@@ -614,10 +552,9 @@ case class HashShuffleSpec(
   }
 
   override def canCreatePartitioning: Boolean = {
-    // To avoid potential data skew, we don't allow `HashShuffleSpec` to create partitioning if
-    // the hash partition keys are not the full join keys (the cluster keys). Then the planner
-    // will add shuffles with the default partitioning of `ClusteredDistribution`, which uses all
-    // the join keys.
+
+    //为了避免潜在的数据倾斜，如果哈希分区键不是完整的连接键（集群键），我们不允许HashShuffleSpec创建分区。
+    // 然后，规划器将使用ClusteredDistribution的默认分区添加洗牌，该分区使用所有连接键。
     if (SQLConf.get.getConf(SQLConf.REQUIRE_ALL_CLUSTER_KEYS_FOR_CO_PARTITION)) {
       distribution.areAllClusterKeysMatched(partitioning.expressions)
     } else {
@@ -638,12 +575,8 @@ case class KeyGroupedShuffleSpec(
     distribution: ClusteredDistribution) extends ShuffleSpec {
 
   /**
-   * A sequence where each element is a set of positions of the partition expression to the cluster
-   * keys. For instance, if cluster keys are [a, b, b] and partition expressions are
-   * [bucket(4, a), years(b)], the result will be [(0), (1, 2)].
-   *
-   * Note that we only allow each partition expression to contain a single partition key.
-   * Therefore the mapping here is very similar to that from `HashShuffleSpec`.
+   * 一个序列，其中每个元素是分区表达式到聚类键的位置集合。例如，如果聚类键是[a, b, b]，分区表达式是[bucket(4, a), years(b)]，则结果将是[(0), (1, 2)]。
+   * 请注意，我们只允许每个分区表达式包含一个单独的分区键。因此，这里的映射与HashShuffleSpec中的映射非常相似。
    */
   lazy val keyPositions: Seq[mutable.BitSet] = {
     val distKeyToPos = mutable.Map.empty[Expression, mutable.BitSet]
@@ -663,16 +596,14 @@ case class KeyGroupedShuffleSpec(
   override def numPartitions: Int = partitioning.numPartitions
 
   override def isCompatibleWith(other: ShuffleSpec): Boolean = other match {
-    // Here we check:
-    //  1. both distributions have the same number of clustering keys
-    //  2. both partitioning have the same number of partitions
-    //  3. partition expressions from both sides are compatible, which means:
-    //    3.1 both sides have the same number of partition expressions
-    //    3.2 for each pair of partition expressions at the same index, the corresponding
-    //        partition keys must share overlapping positions in their respective clustering keys.
-    //    3.3 each pair of partition expressions at the same index must share compatible
-    //        transform functions.
-    //  4. the partition values, if present on both sides, are following the same order.
+    // 这里我们检查：
+    // 1. 两个分布具有相同数量的聚类键
+    // 2. 两个分区具有相同数量的分区
+    // 3. 两边的分区表达式是兼容的，这意味着：
+    // 3.1 两边具有相同数量的分区表达式
+    // 3.2 在相同索引处的每对分区表达式，相应的分区键必须在各自的聚类键中共享重叠的位置。
+    // 3.3 在相同索引处的每对分区表达式必须共享兼容的转换函数。
+    // 4. 分区值（如果两边都存在）按相同顺序进行。
     case otherSpec @ KeyGroupedShuffleSpec(otherPartitioning, otherDistribution) =>
       val expressions = partitioning.expressions
       val otherExpressions = otherPartitioning.expressions

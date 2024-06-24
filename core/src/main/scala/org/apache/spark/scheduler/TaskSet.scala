@@ -20,8 +20,7 @@ package org.apache.spark.scheduler
 import java.util.Properties
 
 /**
- * A set of tasks submitted together to the low-level TaskScheduler, usually representing
- * missing partitions of a particular stage.
+ * 一组任务一起提交给底层的任务调度器，通常表示特定阶段的缺失分区。
  */
 private[spark] class TaskSet(
     val tasks: Array[Task[_]],

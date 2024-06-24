@@ -853,11 +853,8 @@ class JavaPairRDD[K, V](val rdd: RDD[(K, V)])
   }
 
   /**
-   * Repartition the RDD according to the given partitioner and, within each resulting partition,
-   * sort records by their keys.
-   *
-   * This is more efficient than calling `repartition` and then sorting within each partition
-   * because it can push the sorting down into the shuffle machinery.
+   * 根据给定的分区器重新分区 RDD，并在每个结果分区内根据其键对记录进行排序。
+   * 这比先调用 repartition，然后在每个分区内进行排序更有效，因为它可以将排序操作推入到洗牌机制中进行。
    */
   def repartitionAndSortWithinPartitions(partitioner: Partitioner): JavaPairRDD[K, V] = {
     val comp = com.google.common.collect.Ordering.natural().asInstanceOf[Comparator[K]]

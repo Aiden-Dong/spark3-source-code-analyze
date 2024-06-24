@@ -470,10 +470,9 @@ object SQLConf {
   val REQUIRE_ALL_CLUSTER_KEYS_FOR_CO_PARTITION =
     buildConf("spark.sql.requireAllClusterKeysForCoPartition")
       .internal()
-      .doc("When true, the planner requires all the clustering keys as the hash partition keys " +
-        "of the children, to eliminate the shuffles for the operator that needs its children to " +
-        "be co-partitioned, such as JOIN node. This is to avoid data skews which can lead to " +
-        "significant performance regression if shuffles are eliminated.")
+      .doc("当为true时，规划器要求所有聚类键作为子节点的哈希分区键，以消除需要其子节点共同分区的操作符的洗牌，" +
+        "例如JOIN节点。" +
+        "这是为了避免数据倾斜，如果消除了洗牌，可能会导致显著的性能下降。")
       .version("3.3.0")
       .booleanConf
       .createWithDefault(true)

@@ -28,9 +28,9 @@ import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.util.CompletionIterator
 
 /**
- * An optimized CartesianRDD for UnsafeRow, which will cache the rows from second child RDD,
- * will be much faster than building the right partition for every row in left RDD, it also
- * materialize the right RDD (in case of the right RDD is nondeterministic).
+ * 用于UnsafeRow的优化CartesianRDD将缓存来自第二个子RDD的行，
+ * 将比为左侧RDD中的每一行构建右侧分区快得多，而且
+ * 具体化权利RDD（在权利RDD是不确定的情况下）。
  */
 class UnsafeCartesianRDD(
     left : RDD[UnsafeRow],

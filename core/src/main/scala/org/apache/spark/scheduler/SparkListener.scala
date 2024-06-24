@@ -288,201 +288,128 @@ case class SparkListenerResourceProfileAdded(resourceProfile: ResourceProfile)
   extends SparkListenerEvent
 
 /**
- * Interface for listening to events from the Spark scheduler. Most applications should probably
- * extend SparkListener or SparkFirehoseListener directly, rather than implementing this class.
- *
- * Note that this is an internal interface which might change in different Spark releases.
+ * 用于监听来自 Spark 调度器事件的接口。
+ * 大多数应用程序应该直接扩展 SparkListener 或 SparkFirehoseListener，而不是实现这个类。
+ * 请注意，这是一个内部接口，可能会在不同的 Spark 版本中发生变化。
  */
 private[spark] trait SparkListenerInterface {
 
-  /**
-   * Called when a stage completes successfully or fails, with information on the completed stage.
-   */
-  def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit
-
-  /**
-   * Called when a stage is submitted
-   */
+  // 当stage提交时被调用
   def onStageSubmitted(stageSubmitted: SparkListenerStageSubmitted): Unit
 
-  /**
-   * Called when a task starts
-   */
+  // 在一个stage成功完成或失败时调用，并提供关于已完成stage的信息。.
+  def onStageCompleted(stageCompleted: SparkListenerStageCompleted): Unit
+
+  // 当task开始时被调用
   def onTaskStart(taskStart: SparkListenerTaskStart): Unit
 
-  /**
-   * Called when a task begins remotely fetching its result (will not be called for tasks that do
-   * not need to fetch the result remotely).
-   */
+  // 在task开始远程获取其结果时调用（对于不需要远程获取结果的任务，不会调用此方法）。
   def onTaskGettingResult(taskGettingResult: SparkListenerTaskGettingResult): Unit
 
-  /**
-   * Called when a task ends
-   */
+  // 当task结束时被调用
   def onTaskEnd(taskEnd: SparkListenerTaskEnd): Unit
 
-  /**
-   * Called when a job starts
-   */
+  // 当job开始时被调用
   def onJobStart(jobStart: SparkListenerJobStart): Unit
 
-  /**
-   * Called when a job ends
-   */
+  // 当job结束时被调用
   def onJobEnd(jobEnd: SparkListenerJobEnd): Unit
 
-  /**
-   * Called when environment properties have been updated
-   */
+  // 当环境变量更新时被调用
   def onEnvironmentUpdate(environmentUpdate: SparkListenerEnvironmentUpdate): Unit
 
-  /**
-   * Called when a new block manager has joined
-   */
+  // 当加入新的块时被调用
   def onBlockManagerAdded(blockManagerAdded: SparkListenerBlockManagerAdded): Unit
 
-  /**
-   * Called when an existing block manager has been removed
-   */
+  // 当移除块时被调用
   def onBlockManagerRemoved(blockManagerRemoved: SparkListenerBlockManagerRemoved): Unit
 
-  /**
-   * Called when an RDD is manually unpersisted by the application
-   */
+  // 当driver接收到块更新信息时调用。
+  def onBlockUpdated(blockUpdated: SparkListenerBlockUpdated): Unit
+
+  // 当应用程序手动取消持久化一个 RDD 时调用。
   def onUnpersistRDD(unpersistRDD: SparkListenerUnpersistRDD): Unit
 
-  /**
-   * Called when the application starts
-   */
+  // 当应用程序开始时被调用
   def onApplicationStart(applicationStart: SparkListenerApplicationStart): Unit
 
-  /**
-   * Called when the application ends
-   */
+  // 当应用程序结束时被调用
   def onApplicationEnd(applicationEnd: SparkListenerApplicationEnd): Unit
 
-  /**
-   * Called when the driver receives task metrics from an executor in a heartbeat.
-   */
+  // 当Driver在心跳中从Executor接收到任务指标时调用。
   def onExecutorMetricsUpdate(executorMetricsUpdate: SparkListenerExecutorMetricsUpdate): Unit
 
   /**
-   * Called with the peak memory metrics for a given (executor, stage) combination. Note that this
-   * is only present when reading from the event log (as in the history server), and is never
-   * called in a live application.
+   * 在给定的（执行器，阶段）组合的峰值内存指标时调用。
+   * 请注意，这仅在从Event日志读取时（如在History Server中）存在，并且从不在实时应用程序中调用。
    */
   def onStageExecutorMetrics(executorMetrics: SparkListenerStageExecutorMetrics): Unit
 
-  /**
-   * Called when the driver registers a new executor.
-   */
+  // 新的Executor注册到Driver时被调用
   def onExecutorAdded(executorAdded: SparkListenerExecutorAdded): Unit
 
-  /**
-   * Called when the driver removes an executor.
-   */
+  // Executor 退出时被调用
   def onExecutorRemoved(executorRemoved: SparkListenerExecutorRemoved): Unit
 
-  /**
-   * Called when the driver excludes an executor for a Spark application.
-   */
+  // 当driver将某个executor排除在 Spark 应用程序之外时调用。.
   @deprecated("use onExecutorExcluded instead", "3.1.0")
   def onExecutorBlacklisted(executorBlacklisted: SparkListenerExecutorBlacklisted): Unit
 
-  /**
-   * Called when the driver excludes an executor for a Spark application.
-   */
+  // 在驱动程序将某个执行器排除在 Spark 应用程序之外时调用。.
   def onExecutorExcluded(executorExcluded: SparkListenerExecutorExcluded): Unit
 
-  /**
-   * Called when the driver excludes an executor for a stage.
-   */
+  //在driver将某个executor排除在某个stage之外时调用。.
   @deprecated("use onExecutorExcludedForStage instead", "3.1.0")
   def onExecutorBlacklistedForStage(
       executorBlacklistedForStage: SparkListenerExecutorBlacklistedForStage): Unit
 
-  /**
-   * Called when the driver excludes an executor for a stage.
-   */
+  // 在driver将某个executor排除在某个stage之外时调用。.
   def onExecutorExcludedForStage(
       executorExcludedForStage: SparkListenerExecutorExcludedForStage): Unit
 
-  /**
-   * Called when the driver excludes a node for a stage.
-   */
+  // 在driver将某个node排除在某个stage之外时调用。
   @deprecated("use onNodeExcludedForStage instead", "3.1.0")
   def onNodeBlacklistedForStage(nodeBlacklistedForStage: SparkListenerNodeBlacklistedForStage): Unit
 
-  /**
-   * Called when the driver excludes a node for a stage.
-   */
+  // 在driver将某个node排除在某个stage之外时调用。
   def onNodeExcludedForStage(nodeExcludedForStage: SparkListenerNodeExcludedForStage): Unit
 
-  /**
-   * Called when the driver re-enables a previously excluded executor.
-   */
+  // 当驱动程序重新启用之前被排除的executor时调用。
   @deprecated("use onExecutorUnexcluded instead", "3.1.0")
   def onExecutorUnblacklisted(executorUnblacklisted: SparkListenerExecutorUnblacklisted): Unit
 
-  /**
-   * Called when the driver re-enables a previously excluded executor.
-   */
+  // 当驱动程序重新启用之前被排除的executor时调用。
   def onExecutorUnexcluded(executorUnexcluded: SparkListenerExecutorUnexcluded): Unit
 
-  /**
-   * Called when the driver excludes a node for a Spark application.
-   */
+  // 当driver将某个node排除在 Spark 应用程序之外时调用。
   @deprecated("use onNodeExcluded instead", "3.1.0")
   def onNodeBlacklisted(nodeBlacklisted: SparkListenerNodeBlacklisted): Unit
 
-  /**
-   * Called when the driver excludes a node for a Spark application.
-   */
+  //  当driver将某个node排除在 Spark 应用程序之外时调用。
   def onNodeExcluded(nodeExcluded: SparkListenerNodeExcluded): Unit
 
-  /**
-   * Called when the driver re-enables a previously excluded node.
-   */
+  // 当驱动程序重新启用之前被排除的node时调用。
   @deprecated("use onNodeUnexcluded instead", "3.1.0")
   def onNodeUnblacklisted(nodeUnblacklisted: SparkListenerNodeUnblacklisted): Unit
 
-  /**
-   * Called when the driver re-enables a previously excluded node.
-   */
+  // 当驱动程序重新启用之前被排除的node时调用。
   def onNodeUnexcluded(nodeUnexcluded: SparkListenerNodeUnexcluded): Unit
 
-  /**
-   * Called when a taskset becomes unschedulable due to exludeOnFailure and dynamic allocation
-   * is enabled.
-   */
+  // 当由于 excludeOnFailure 和启用动态分配导致任务集无法调度时调用。
   def onUnschedulableTaskSetAdded(
       unschedulableTaskSetAdded: SparkListenerUnschedulableTaskSetAdded): Unit
 
-  /**
-   * Called when an unschedulable taskset becomes schedulable and dynamic allocation
-   * is enabled.
-   */
+  // 当一个无法调度的任务集变得可调度且动态分配已启用时调用。
   def onUnschedulableTaskSetRemoved(
       unschedulableTaskSetRemoved: SparkListenerUnschedulableTaskSetRemoved): Unit
 
-  /**
-   * Called when the driver receives a block update info.
-   */
-  def onBlockUpdated(blockUpdated: SparkListenerBlockUpdated): Unit
-
-  /**
-   * Called when a speculative task is submitted
-   */
+  // 在提交推测任务时调用。
   def onSpeculativeTaskSubmitted(speculativeTask: SparkListenerSpeculativeTaskSubmitted): Unit
 
-  /**
-   * Called when other events like SQL-specific events are posted.
-   */
+  // 在发布其他事件，如特定于 SQL 的事件时调用。
   def onOtherEvent(event: SparkListenerEvent): Unit
 
-  /**
-   * Called when a Resource Profile is added to the manager.
-   */
+  // 在资源配置文件被添加到管理器时调用。
   def onResourceProfileAdded(event: SparkListenerResourceProfileAdded): Unit
 }
 

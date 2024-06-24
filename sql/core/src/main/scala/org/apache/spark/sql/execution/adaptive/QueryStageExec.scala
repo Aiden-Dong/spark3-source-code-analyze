@@ -33,15 +33,10 @@ import org.apache.spark.sql.execution.exchange._
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
 /**
- * A query stage is an independent subgraph of the query plan. Query stage materializes its output
- * before proceeding with further operators of the query plan. The data statistics of the
- * materialized output can be used to optimize subsequent query stages.
- *
- * There are 2 kinds of query stages:
- *   1. Shuffle query stage. This stage materializes its output to shuffle files, and Spark launches
- *      another job to execute the further operators.
- *   2. Broadcast query stage. This stage materializes its output to an array in driver JVM. Spark
- *      broadcasts the array before executing the further operators.
+ * 查询阶段是查询计划的独立子图。查询阶段在继续查询计划的进一步操作之前会将其输出物化。对物化输出的数据统计信息可以用来优化后续的查询阶段。
+ * 有两种类型的查询阶段：
+ * - 洗牌查询阶段。该阶段将其输出物化为洗牌文件，并且Spark会启动另一个作业来执行后续的操作。
+ * - 广播查询阶段。该阶段将其输出物化为驱动程序JVM中的数组。Spark在执行后续的操作之前会广播该数组。
  */
 abstract class QueryStageExec extends LeafExecNode {
 
@@ -61,9 +56,7 @@ abstract class QueryStageExec extends LeafExecNode {
   val _canonicalized: SparkPlan
 
   /**
-   * Materialize this query stage, to prepare for the execution, like submitting map stages,
-   * broadcasting data, etc. The caller side can use the returned [[Future]] to wait until this
-   * stage is ready.
+   * 将此查询阶段物化，以准备执行，例如提交映射阶段，广播数据等。调用方可以使用返回的 [[Future]] 来等待此阶段准备就绪。
    */
   def doMaterialize(): Future[Any]
 

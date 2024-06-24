@@ -37,6 +37,7 @@ import org.apache.spark.status.{ElementTrackingStore, KVUtils, LiveEntity}
 import org.apache.spark.util.Utils
 import org.apache.spark.util.collection.OpenHashMap
 
+// SQL 状态监控
 class SQLAppStatusListener(
     conf: SparkConf,
     kvstore: ElementTrackingStore,

@@ -27,8 +27,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.Utils
 
 /**
- * A rule to coalesce the shuffle partitions based on the map output statistics, which can
- * avoid many small reduce tasks that hurt performance.
+ * 基于映射输出统计信息合并混洗分区的规则，可以避免许多小的归并任务，从而提高性能。
  */
 case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleReadRule {
 
@@ -45,18 +44,13 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
       return plan
     }
 
-    // Ideally, this rule should simply coalesce partitions w.r.t. the target size specified by
-    // ADVISORY_PARTITION_SIZE_IN_BYTES (default 64MB). To avoid perf regression in AQE, this
-    // rule by default tries to maximize the parallelism and set the target size to
-    // `total shuffle size / Spark default parallelism`. In case the `Spark default parallelism`
-    // is too big, this rule also respect the minimum partition size specified by
-    // COALESCE_PARTITIONS_MIN_PARTITION_SIZE (default 1MB).
-    // For history reason, this rule also need to support the config
-    // COALESCE_PARTITIONS_MIN_PARTITION_NUM. We should remove this config in the future.
+    // 理想情况下，此规则应简单地根据 ADVISORY_PARTITION_SIZE_IN_BYTES（默认为 64MB）指定的目标大小合并分区。
+    // 为了避免在 AQE 中出现性能回归，此规则默认尝试最大化并行性，并将目标大小设置为“总洗牌大小 / Spark 默认并行度”。
+    // 如果“Spark 默认并行度”太大，此规则还将考虑 COALESCE_PARTITIONS_MIN_PARTITION_SIZE（默认为 1MB）指定的最小分区大小。
+    // 出于历史原因，此规则还需要支持 COALESCE_PARTITIONS_MIN_PARTITION_NUM 配置。我们应该在未来删除此配置。
     val minNumPartitions = conf.getConf(SQLConf.COALESCE_PARTITIONS_MIN_PARTITION_NUM).getOrElse {
       if (conf.getConf(SQLConf.COALESCE_PARTITIONS_PARALLELISM_FIRST)) {
-        // We fall back to Spark default parallelism if the minimum number of coalesced partitions
-        // is not set, so to avoid perf regressions compared to no coalescing.
+        // 如果未设置最小合并分区数，则我们会退回到 Spark 默认并行度，以避免与不进行合并相比的性能回归。
         session.sparkContext.defaultParallelism
       } else {
         // If we don't need to maximize the parallelism, we set `minPartitionNum` to 1, so that
@@ -64,12 +58,13 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
         1
       }
     }
+    // spark.sql.adaptive.advisoryPartitionSizeInBytes
     val advisoryTargetSize = conf.getConf(SQLConf.ADVISORY_PARTITION_SIZE_IN_BYTES)
+
+    // 最小分区大小
     val minPartitionSize = if (Utils.isTesting) {
-      // In the tests, we usually set the target size to a very small value that is even smaller
-      // than the default value of the min partition size. Here we also adjust the min partition
-      // size to be not larger than 20% of the target size, so that the tests don't need to set
-      // both configs all the time to check the coalescing behavior.
+      // 在测试中，我们通常将目标大小设置为非常小的值，甚至比最小分区大小的默认值还要小。
+      // 在这里，我们还将最小分区大小调整为不大于目标大小的20%，这样测试就不需要一直设置这两个配置来检查合并行为。
       conf.getConf(SQLConf.COALESCE_PARTITIONS_MIN_PARTITION_SIZE).min(advisoryTargetSize / 5)
     } else {
       conf.getConf(SQLConf.COALESCE_PARTITIONS_MIN_PARTITION_SIZE)
@@ -78,6 +73,7 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
     // Sub-plans under the Union operator can be coalesced independently, so we can divide them
     // into independent "coalesce groups", and all shuffle stages within each group have to be
     // coalesced together.
+    // 收集整理要合并的分区
     val coalesceGroups = collectCoalesceGroups(plan)
 
     // Divide minimum task parallelism among coalesce groups according to their data sizes.
@@ -122,23 +118,20 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
   }
 
   /**
-   * Gather all coalesce-able groups such that the shuffle stages in each child of a Union operator
-   * are in their independent groups if:
-   * 1) all leaf nodes of this child are shuffle stages; and
-   * 2) all these shuffle stages support coalescing.
+   * 收集所有可合并的组，以便每个 Union 操作符的子操作符的洗牌阶段都在它们各自的独立组中，如果：
+   * - 该子操作符的所有叶节点都是洗牌阶段；以及
+   * - 所有这些洗牌阶段都支持合并。
    */
   private def collectCoalesceGroups(plan: SparkPlan): Seq[Seq[ShuffleStageInfo]] = plan match {
     case r @ AQEShuffleReadExec(q: ShuffleQueryStageExec, _) if isSupported(q.shuffle) =>
       Seq(collectShuffleStageInfos(r))
     case unary: UnaryExecNode => collectCoalesceGroups(unary.child)
     case union: UnionExec => union.children.flatMap(collectCoalesceGroups)
-    // If not all leaf nodes are query stages, it's not safe to reduce the number of shuffle
-    // partitions, because we may break the assumption that all children of a spark plan have
-    // same number of output partitions.
+    // 如果并非所有叶节点都是查询阶段，那么减少洗牌分区数量可能会破坏 Spark 计划中子操作符之间关于输出分区数量的假设，导致任务执行失败。
     case p if p.collectLeaves().forall(_.isInstanceOf[QueryStageExec]) =>
       val shuffleStages = collectShuffleStageInfos(p)
-      // ShuffleExchanges introduced by repartition do not support partition number change.
-      // We change the number of partitions only if all the ShuffleExchanges support it.
+      // 由重新分区引入的 ShuffleExchange 不支持更改分区数量。
+      // 只有如果所有的 ShuffleExchange 都支持，我们才会更改分区数量。
       if (shuffleStages.forall(s => isSupported(s.shuffleStage.shuffle))) {
         Seq(shuffleStages)
       } else {

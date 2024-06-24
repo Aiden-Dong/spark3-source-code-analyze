@@ -32,16 +32,15 @@ import org.apache.spark.internal.config.Python.PYSPARK_EXECUTOR_MEMORY
 import org.apache.spark.util.Utils
 
 /**
- * Resource profile to associate with an RDD. A ResourceProfile allows the user to
- * specify executor and task requirements for an RDD that will get applied during a
- * stage. This allows the user to change the resource requirements between stages.
- * This is meant to be immutable so user can't change it after building. Users
- * should use [[ResourceProfileBuilder]] to build it.
+ * 与RDD关联的资源配置文件。
+ * 资源配置文件允许用户在阶段期间指定RDD的执行器和任务要求。
+ * 这使用户可以在阶段之间更改资源需求。
+ * 这个设计是为了不可变的，所以用户在构建后无法更改它。用户应该使用[[ResourceProfileBuilder]]来构建它。
  *
- * @param executorResources Resource requests for executors. Mapped from the resource
- *                          name (e.g., cores, memory, CPU) to its specific request.
- * @param taskResources Resource requests for tasks. Mapped from the resource
- *                      name (e.g., cores, memory, CPU) to its specific request.
+ * @param executorResources executor的资源请求。
+ *                          从资源名称（例如，core、memory、CPU）映射到其具体的请求。
+ * @param taskResources task的资源请求。
+ *                      从资源名称（例如，core、memory、CPU）映射到其具体的请求。
  */
 @Evolving
 @Since("3.1.0")
@@ -150,13 +149,11 @@ class ResourceProfile(
   }
 
   /**
-   * Utility function to calculate the number of tasks you can run on a single Executor based
-   * on the task and executor resource requests in the ResourceProfile. This will be based
-   * off the resource that is most restrictive. For instance, if the executor
-   * request is for 4 cpus and 2 gpus and your task request is for 1 cpu and 1 gpu each, the
-   * limiting resource is gpu and the number of tasks you can run on a single executor is 2.
-   * This function also sets the limiting resource, isCoresLimitKnown and number of slots per
-   * resource address.
+   *
+   * 用于根据ResourceProfile中的任务和执行器资源请求计算在单个执行器上可以运行的任务数的实用函数。
+   * 这将基于最为限制的资源进行计算。
+   * 例如，如果执行器请求为4个CPU和2个GPU，而您的任务请求为每个1个CPU和1个GPU，那么限制资源是GPU，单个执行器上可运行的任务数为2。
+   * 此函数还设置了限制资源、isCoresLimitKnown和每个资源地址的槽位数。
    */
   private def calculateTasksAndLimitingResource(sparkConf: SparkConf): Unit = synchronized {
     val shouldCheckExecCores = shouldCheckExecutorCores(sparkConf)

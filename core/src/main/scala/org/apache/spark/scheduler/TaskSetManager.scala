@@ -37,64 +37,71 @@ import org.apache.spark.util.{AccumulatorV2, Clock, LongAccumulator, SystemClock
 import org.apache.spark.util.collection.MedianHeap
 
 /**
- * Schedules the tasks within a single TaskSet in the TaskSchedulerImpl. This class keeps track of
- * each task, retries tasks if they fail (up to a limited number of times), and
- * handles locality-aware scheduling for this TaskSet via delay scheduling. The main interfaces
- * to it are resourceOffer, which asks the TaskSet whether it wants to run a task on one node,
- * and handleSuccessfulTask/handleFailedTask, which tells it that one of its tasks changed state
- *  (e.g. finished/failed).
+ * 在 TaskSchedulerImpl中安排单个TaskSet中的任务。该类跟踪每个任务，如果它们失败(最多限制次数)，则重试任务，
+ * 并通过延迟调度处理此TaskSet的位置感知调度。
  *
- * THREADING: This class is designed to only be called from code with a lock on the
- * TaskScheduler (e.g. its event handlers). It should not be called from other threads.
+ * 它的主要接口是resourceOffer，它询问TaskSet是否想要在一个节点上运行一个任务，以及handleSuccessfulTask/handleFailedTask，
+ * 它告诉它其中一个任务的状态已更改(例如已完成/失败)。
  *
- * @param sched           the TaskSchedulerImpl associated with the TaskSetManager
- * @param taskSet         the TaskSet to manage scheduling for
- * @param maxTaskFailures if any particular task fails this number of times, the entire
- *                        task set will be aborted
+ * 线程安全性：此类设计为仅从持有TaskScheduler锁的代码中调用(例如其事件处理程序)。不应该从其他线程调用它。
+ *
+ * @param sched           与TaskSetManager相关联的TaskSchedulerImpl。
+ * @param taskSet         管理调度的TaskSet。
+ * @param maxTaskFailures 如果任何特定任务失败次数达到这个数字，整个任务集将被中止。
  */
 private[spark] class TaskSetManager(
     sched: TaskSchedulerImpl,
-    val taskSet: TaskSet,
+    val taskSet: TaskSet,    // 当前处于调度Stage的Task集合
     val maxTaskFailures: Int,
     healthTracker: Option[HealthTracker] = None,
     clock: Clock = new SystemClock()) extends Schedulable with Logging {
 
   private val conf = sched.sc.conf
 
-  // SPARK-21563 make a copy of the jars/files so they are consistent across the TaskSet
+  // SPARK-21563 复制jar文件，使它们在整个TaskSet中保持一致。
   private val addedJars = HashMap[String, Long](sched.sc.addedJars.toSeq: _*)
   private val addedFiles = HashMap[String, Long](sched.sc.addedFiles.toSeq: _*)
   private val addedArchives = HashMap[String, Long](sched.sc.addedArchives.toSeq: _*)
 
   val maxResultSize = conf.get(config.MAX_RESULT_SIZE)
 
-  // Serializer for closures and tasks.
+  // 用于闭包和任务的序列化器。
   val env = SparkEnv.get
   val ser = env.closureSerializer.newInstance()
 
+  // 当前Stage的task集合
   val tasks = taskSet.tasks
+
+  // 判断当前Stage是否是 ShuffledMapStage
   private val isShuffleMapTasks = tasks(0).isInstanceOf[ShuffleMapTask]
+
+  // task 分区号跟taskId绑定
   private[scheduler] val partitionToIndex = tasks.zipWithIndex
     .map { case (t, idx) => t.partitionId -> idx }.toMap
+
   val numTasks = tasks.length
   val copiesRunning = new Array[Int](numTasks)
 
+  // 是否启用推测执行
   val speculationEnabled = conf.get(SPECULATION_ENABLED)
-  // Quantile of tasks at which to start speculation
+  // 开始猜测的任务的分位数
   val speculationQuantile = conf.get(SPECULATION_QUANTILE)
+
+  // 推测执行的任务触发阈值
   val speculationMultiplier = conf.get(SPECULATION_MULTIPLIER)
+
+  // 最少开始启用推测执行的任务数量
   val minFinishedForSpeculation = math.max((speculationQuantile * numTasks).floor.toInt, 1)
-  // User provided threshold for speculation regardless of whether the quantile has been reached
+
+  // 用户提供的启动猜测的时间阈值阈值，无论是否达到了分位数。
   val speculationTaskDurationThresOpt = conf.get(SPECULATION_TASK_DURATION_THRESHOLD)
-  // SPARK-29976: Only when the total number of tasks in the stage is less than or equal to the
-  // number of slots on a single executor, would the task manager speculative run the tasks if
-  // their duration is longer than the given threshold. In this way, we wouldn't speculate too
-  // aggressively but still handle basic cases.
-  // SPARK-30417: #cores per executor might not be set in spark conf for standalone mode, then
-  // the value of the conf would 1 by default. However, the executor would use all the cores on
-  // the worker. Therefore, CPUS_PER_TASK is okay to be greater than 1 without setting #cores.
-  // To handle this case, we set slots to 1 when we don't know the executor cores.
-  // TODO: use the actual number of slots for standalone mode.
+  // SPARK-29976：仅当阶段中的任务总数小于或等于单个执行器上的插槽数时，任务管理器才会在任务的持续时间超过给定阈值时运行这些任务的猜测。
+  //              通过这种方式，我们不会过于激进地进行猜测，但仍然处理基本情况。
+  // SPARK-30417：对于独立模式，可能未在Spark配置中设置每个执行器的核心数，则该配置的值默认为1。
+  //               但是，执行器将使用工作节点上的所有核心。
+  //               因此，CPUS_PER_TASK 可以在没有设置核心数的情况下大于1。
+  //               为了处理这种情况，在我们不知道执行器核心数时，我们将插槽数设置为1。
+  // TODO：对于独立模式，使用实际插槽数。
   val speculationTasksLessEqToSlots = {
     val rpId = taskSet.resourceProfileId
     val resourceProfile = sched.sc.resourceProfileManager.resourceProfileFromId(rpId)
@@ -106,20 +113,24 @@ private[spark] class TaskSetManager(
     numTasks <= slots
   }
 
-  private val executorDecommissionKillInterval =
-    conf.get(EXECUTOR_DECOMMISSION_KILL_INTERVAL).map(TimeUnit.SECONDS.toMillis)
+  private val executorDecommissionKillInterval = conf.get(EXECUTOR_DECOMMISSION_KILL_INTERVAL)
+    .map(TimeUnit.SECONDS.toMillis)
 
-  // For each task, tracks whether a copy of the task has succeeded. A task will also be
-  // marked as "succeeded" if it failed with a fetch failure, in which case it should not
-  // be re-run because the missing map data needs to be regenerated first.
+  // 对于每个任务，跟踪任务的一个副本是否成功。
+  // 如果任务由于获取失败而失败，任务也将被标记为“成功”，
+  // 在这种情况下，它不应重新运行，因为缺少的映射数据首先需要重新生成。
   val successful = new Array[Boolean](numTasks)
+  // 失败次数记录
   private val numFailures = new Array[Int](numTasks)
 
-  // Add the tid of task into this HashSet when the task is killed by other attempt tasks.
-  // This happened while we set the `spark.speculation` to true. The task killed by others
-  // should not resubmit while executor lost.
+
+  // 当任务被其他尝试任务杀死时，将任务的tid添加到此HashSet中。
+  // 当我们将spark.speculation设置为true时会发生这种情况。
+  // 被其他任务杀死的任务在execotr loss时不应该重新提交。
   private val killedByOtherAttempt = new HashSet[Long]
 
+
+  // 所有Task的信息
   val taskAttempts = Array.fill[List[TaskInfo]](numTasks)(Nil)
   private[scheduler] var tasksSuccessful = 0
 

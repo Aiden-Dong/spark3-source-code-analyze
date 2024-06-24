@@ -24,21 +24,21 @@ import org.apache.spark.errors.SparkCoreErrors
 
 /**
  * :: DeveloperApi ::
- * Information about a running task attempt inside a TaskSet.
+ * TaskSet内运行任务尝试的信息。
  */
 @DeveloperApi
 class TaskInfo(
     val taskId: Long,
     /**
-     * The index of this task within its task set. Not necessarily the same as the ID of the RDD
-     * partition that the task is computing.
+     * 这个任务在其任务集中的索引。
+     * 不一定与任务正在计算的RDD分区的ID相同。
      */
     val index: Int,
     val attemptNumber: Int,
     /**
-     * The actual RDD partition ID in this task.
-     * The ID of the RDD partition is always same across task attempts.
-     * This will be -1 for historical data, and available for all applications since Spark 3.3.
+     * 这个任务中的实际RDD分区ID。
+     * RDD分区的ID在所有任务尝试中始终相同。
+     * 对于历史数据，这将为-1，并且自Spark 3.3以来对所有应用程序可用。
      */
     val partitionId: Int,
     val launchTime: Long,

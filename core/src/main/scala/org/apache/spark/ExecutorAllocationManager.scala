@@ -37,37 +37,35 @@ import org.apache.spark.scheduler.dynalloc.ExecutorMonitor
 import org.apache.spark.util.{Clock, SystemClock, ThreadUtils, Utils}
 
 /**
- * An agent that dynamically allocates and removes executors based on the workload.
+ *基于工作负载动态分配和移除Executor的代理。
  *
- * The ExecutorAllocationManager maintains a moving target number of executors, for each
- * ResourceProfile, which is periodically synced to the cluster manager. The target starts
- * at a configured initial value and changes with the number of pending and running tasks.
+ * ExecutorAllocationManager（执行器分配管理器）维护着每个资源配置（ResourceProfile）的动态目标Executor数量，
+ * 该数量会定期同步到集群管理器。
+ * 这个目标数从一个配置的初始值开始，并随着待处理和运行任务的数量而变化。
  *
- * Decreasing the target number of executors happens when the current target is more than needed to
- * handle the current load. The target number of executors is always truncated to the number of
- * executors that could run all current running and pending tasks at once.
  *
- * Increasing the target number of executors happens in response to backlogged tasks waiting to be
- * scheduled. If the scheduler queue is not drained in M seconds, then new executors are added. If
- * the queue persists for another N seconds, then more executors are added and so on. The number
- * added in each round increases exponentially from the previous round until an upper bound has been
- * reached. The upper bound is based both on a configured property and on the current number of
- * running and pending tasks, as described above.
+ * 当当前目标数超过当前负载所需的数量时，Executor的目标数量会减少。
+ * Executor的目标数量始终被截断为能够一次运行所有当前正在运行和待处理任务的Executor数量。
  *
- * The rationale for the exponential increase is twofold: (1) Executors should be added slowly
- * in the beginning in case the number of extra executors needed turns out to be small. Otherwise,
- * we may add more executors than we need just to remove them later. (2) Executors should be added
- * quickly over time in case the maximum number of executors is very high. Otherwise, it will take
- * a long time to ramp up under heavy workloads.
+ * 增加Executor目标数量是为了响应等待调度的积压任务。如果调度器队列在M秒内没有排空，则会添加新的执行器。
+ * 如果队列在另外N秒内持续存在，则会添加更多的执行器，依此类推。
  *
- * The remove policy is simpler and is applied on each ResourceProfile separately. If an executor
- * for that ResourceProfile has been idle for K seconds and the number of executors is more
- * then what is needed for that ResourceProfile, meaning there are not enough tasks that could use
- * the executor, then it is removed. Note that an executor caching any data
- * blocks will be removed if it has been idle for more than L seconds.
+ * 每一轮添加的数量都会从前一轮指数增加，直到达到上限为止。
+ * 上限既取决于配置属性，也取决于当前正在运行和待处理任务的数量，就像前面描述的那样。
  *
- * There is no retry logic in either case because we make the assumption that the cluster manager
- * will eventually fulfill all requests it receives asynchronously.
+ *
+ * 指数增长的原理有两个方面：
+ * (1) 在开始阶段，应该慢慢增加Executor，以防所需额外Executor的数量很小。
+ *    否则，我们可能会添加比我们需要的更多的Executor，然后再将它们移除。
+ * (2) 随着时间的推移，如果最大Executor数量非常高，应该快速增加Executor。
+ *    否则，在重负载下，需要很长时间才能逐渐增加执行器数量。
+ *
+ *
+ * 移除策略更简单，并且分别应用于每个资源配置（ResourceProfile）。如果针对该资源配置的执行器在K秒内处于空闲状态，
+ * 并且Executor的数量超过了该资源配置所需的数量，意味着没有足够的任务可以使用该Executor，则该执行器将被移除。
+ * 请注意，如果执行器缓存了任何数据块，并且空闲时间超过L秒，则该执行器也将被移除。
+ *
+ * 在这两种情况下都没有重试逻辑，因为我们假设集群管理器最终会异步地满足它接收到的所有请求。
  *
  * The relevant Spark properties are below. Each of these properties applies separately to
  * every ResourceProfile. So if you set a minimum number of executors, that is a minimum

@@ -241,7 +241,7 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
   }
 
   /**
-   * Blocks the thread until all subqueries finish evaluation and update the results.
+   * 阻塞线程直到所有子查询完成评估并更新结果。
    */
   protected def waitForSubqueries(): Unit = synchronized {
     // fill in the result of subqueries
@@ -252,12 +252,12 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
   }
 
   /**
-   * Whether the "prepare" method is called.
+   * 是否调用了 "prepare" 方法。
    */
   private var prepared = false
 
   /**
-   * Prepares this SparkPlan for execution. It's idempotent.
+   * 为执行准备此 SparkPlan。它是幂等的。.
    */
   final def prepare(): Unit = {
     // doPrepare() may depend on it's children, we should call prepare() on all the children first.
@@ -272,37 +272,29 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
   }
 
   /**
-   * Overridden by concrete implementations of SparkPlan. It is guaranteed to run before any
-   * `execute` of SparkPlan. This is helpful if we want to set up some state before executing the
-   * query, e.g., `BroadcastHashJoin` uses it to broadcast asynchronously.
-   *
-   * @note `prepare` method has already walked down the tree, so the implementation doesn't have
-   * to call children's `prepare` methods.
-   *
-   * This will only be called once, protected by `this`.
+   * 由 SparkPlan 的具体实现覆盖。确保在 SparkPlan 的任何execute之前运行。
+   * 如果我们想在执行查询之前设置一些状态，这将非常有用，例如，BroadcastHashJoin 使用它来异步广播。
+   * 注意，prepare方法已经遍历了整个树，因此实现不必调用子节点的prepare方法。
+   * 这个方法只会被调用一次，并受到this的保护。
    */
   protected def doPrepare(): Unit = {}
 
   /**
-   * Produces the result of the query as an `RDD[InternalRow]`
-   *
-   * Overridden by concrete implementations of SparkPlan.
+   * 由 SparkPlan 的具体实现覆盖。
    */
   protected def doExecute(): RDD[InternalRow]
 
   /**
-   * Produces the result of the query as a broadcast variable.
-   *
-   * Overridden by concrete implementations of SparkPlan.
+   * 由 SparkPlan 的具体实现覆盖。
    */
   protected[sql] def doExecuteBroadcast[T](): broadcast.Broadcast[T] = {
     throw QueryExecutionErrors.doExecuteBroadcastNotImplementedError(nodeName)
   }
 
   /**
-   * Produces the result of the query as an `RDD[ColumnarBatch]` if [[supportsColumnar]] returns
-   * true. By convention the executor that creates a ColumnarBatch is responsible for closing it
-   * when it is no longer needed. This allows input formats to be able to reuse batches if needed.
+   * 由支持Columnar的SparkPlan的具体实现覆盖。
+   * 按照约定，创建ColumnarBatch的执行器负责在不再需要时关闭它。
+   * 这允许输入格式在需要时能够重用批次。
    */
   protected def doExecuteColumnar(): RDD[ColumnarBatch] = {
     throw new IllegalStateException(s"Internal Error ${this.getClass} has column support" +
@@ -310,20 +302,18 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
   }
 
   /**
-   * Converts the output of this plan to row-based if it is columnar plan.
+   * 将该计划的输出转换为基于行的形式，如果它是列式计划的话。
    */
   def toRowBased: SparkPlan = if (supportsColumnar) ColumnarToRowExec(this) else this
 
   /**
-   * Packing the UnsafeRows into byte array for faster serialization.
-   * The byte arrays are in the following format:
-   * [size] [bytes of UnsafeRow] [size] [bytes of UnsafeRow] ... [-1]
-   *
-   * UnsafeRow is highly compressible (at least 8 bytes for any column), the byte array is also
-   * compressed.
+   * 将 UnsafeRow 打包成字节数组以加快序列化速度。
+   * 字节数组的格式如下：
+   * [size] [UnsafeRow 的字节] [size] [UnsafeRow 的字节] ... [-1]
+   * UnsafeRow 是高度可压缩的（对于任何列至少为 8 个字节），字节数组也被压缩了。
    */
-  private def getByteArrayRdd(
-      n: Int = -1, takeFromEnd: Boolean = false): RDD[(Long, Array[Byte])] = {
+  private def getByteArrayRdd(n: Int = -1,
+                              takeFromEnd: Boolean = false): RDD[(Long, Array[Byte])] = {
     execute().mapPartitionsInternal { iter =>
       var count = 0
       val buffer = new Array[Byte](4 << 10)  // 4K
@@ -363,7 +353,7 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
   }
 
   /**
-   * Decodes the byte arrays back to UnsafeRows and put them into buffer.
+   * 解码字节数组回到 UnsafeRows 并将它们放入缓冲区中。
    */
   private def decodeUnsafeRows(bytes: Array[Byte]): Iterator[InternalRow] = {
     val nFields = schema.length

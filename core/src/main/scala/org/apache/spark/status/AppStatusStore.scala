@@ -30,7 +30,7 @@ import org.apache.spark.util.Utils
 import org.apache.spark.util.kvstore.{InMemoryStore, KVStore}
 
 /**
- * A wrapper around a KVStore that provides methods for accessing the API data stored within.
+ * 一个封装在 KVStore 外部的包装器，提供访问存储在其中的 API 数据的方法。
  */
 private[spark] class AppStatusStore(
     val store: KVStore,

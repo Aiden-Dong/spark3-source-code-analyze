@@ -130,12 +130,28 @@ class HashPartitioner(partitions: Int) extends Partitioner {
 }
 
 /**
- * A [[org.apache.spark.Partitioner]] that partitions sortable records by range into roughly
- * equal ranges. The ranges are determined by sampling the content of the RDD passed in.
+ * RangePartitioner 是 Spark 中的一种分区器，它根据元素的范围将元素分配到不同的分区中。
+ * RangePartitioner 的实现原理如下：
+ * 1. 计算总体的数据抽样大小
+ *    RangePartitioner 会根据分区数量和数据量计算总体的数据抽样大小。
+ *    计算规则是：至少每个分区抽取 20 个数据或者最多 1e6 的样本的数据量。
+ * 2. 根据分区数量计算每个分区的数据抽样样本数量最大值
+ *    根据总体的数据抽样大小和分区数量，可以计算出每个分区的数据抽样样本数量最大值
+ * 3. 对数据进行采样
+ *    RangePartitioner 会根据计算出的数据抽样样本数量最大值对数据进行采样。
+ *    采样算法如下：
+ *    - 随机生成一个 0 到 1 的随机数
+ *    - 如果随机数小于 1/n，则保留当前数据
+ *    - 否则，继续保留前面的数据
+ * 4. 计算分界点
+ *    根据采样后的数据，RangePartitioner 会计算出分界点。
+ *    分界点是将数据划分为不同分区的边界。
+ * 5. 将数据分配到不同的分区中
+ *    根据分界点，RangePartitioner 会将数据分配到不同的分区中。
+ *    具体来说，对于一个数据，RangePartitioner 会找到它所在的范围，然后将其分配到该范围对应的分区中。
  *
- * @note The actual number of partitions created by the RangePartitioner might not be the same
- * as the `partitions` parameter, in the case where the number of sampled records is less than
- * the value of `partitions`.
+ * @注意 实际由 RangePartitioner 创建的分区数量可能与 `partitions` 参数不同，
+ * 在抽样记录数小于 `partitions` 值的情况下。
  */
 class RangePartitioner[K : Ordering : ClassTag, V](
     partitions: Int,
@@ -158,13 +174,13 @@ class RangePartitioner[K : Ordering : ClassTag, V](
 
   private var ordering = implicitly[Ordering[K]]
 
-  // An array of upper bounds for the first (partitions - 1) partitions
+  // 这句话描述了一个数组，它包含了除最后一个分区之外所有分区的上限值
   private var rangeBounds: Array[K] = {
     if (partitions <= 1) {
       Array.empty
     } else {
-      // This is the sample size we need to have roughly balanced output partitions, capped at 1M.
-      // Cast to double to avoid overflowing ints or longs
+      // 这是我们实现大致平衡的输出分区所需的样本大小，最大值为 1M。
+      // 将其转换为 double 类型以避免整型或长整型溢出
       val sampleSize = math.min(samplePointsPerPartitionHint.toDouble * partitions, 1e6)
       // Assume the input partitions are roughly balanced and over-sample a little bit.
       val sampleSizePerPartition = math.ceil(3.0 * sampleSize / rdd.partitions.length).toInt

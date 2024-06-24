@@ -33,7 +33,7 @@ import org.apache.spark.storage.{RDDBlockId, ShuffleDataBlockId}
 import org.apache.spark.util.Clock
 
 /**
- * A monitor for executor activity, used by ExecutorAllocationManager to detect idle executors.
+ * 这个监视器用于监控Executor的活动情况，由ExecutorAllocationManager使用，用于检测空闲的执行器。
  */
 private[spark] class ExecutorMonitor(
     conf: SparkConf,
@@ -43,12 +43,11 @@ private[spark] class ExecutorMonitor(
     metrics: ExecutorAllocationManagerSource = null)
   extends SparkListener with CleanerListener with Logging {
 
-  private val idleTimeoutNs = TimeUnit.SECONDS.toNanos(
-    conf.get(DYN_ALLOCATION_EXECUTOR_IDLE_TIMEOUT))
-  private val storageTimeoutNs = TimeUnit.SECONDS.toNanos(
-    conf.get(DYN_ALLOCATION_CACHED_EXECUTOR_IDLE_TIMEOUT))
-  private val shuffleTimeoutNs = TimeUnit.MILLISECONDS.toNanos(
-    conf.get(DYN_ALLOCATION_SHUFFLE_TRACKING_TIMEOUT))
+  private val idleTimeoutNs = TimeUnit.SECONDS.toNanos(conf.get(DYN_ALLOCATION_EXECUTOR_IDLE_TIMEOUT))
+
+  private val storageTimeoutNs = TimeUnit.SECONDS.toNanos(conf.get(DYN_ALLOCATION_CACHED_EXECUTOR_IDLE_TIMEOUT))
+
+  private val shuffleTimeoutNs = TimeUnit.MILLISECONDS.toNanos(conf.get(DYN_ALLOCATION_SHUFFLE_TRACKING_TIMEOUT))
 
   private val fetchFromShuffleSvcEnabled = conf.get(SHUFFLE_SERVICE_ENABLED) &&
     conf.get(SHUFFLE_SERVICE_FETCH_RDD_ENABLED)
@@ -58,20 +57,15 @@ private[spark] class ExecutorMonitor(
   private val executors = new ConcurrentHashMap[String, Tracker]()
   private val execResourceProfileCount = new ConcurrentHashMap[Int, Int]()
 
-  // The following fields are an optimization to avoid having to scan all executors on every EAM
-  // schedule interval to find out which ones are timed out. They keep track of when the next
-  // executor timeout is expected to happen, and the current list of timed out executors. There's
-  // also a flag that forces the EAM task to recompute the timed out executors, in case some event
-  // arrives on the listener bus that may cause the current list of timed out executors to change.
+  // 这些字段是为了优化，在每个EAM调度间隔上避免扫描所有执行器以查找哪些执行器已超时。
+  // 它们跟踪下一个执行器超时预计发生的时间，以及当前已超时的执行器列表。此外，还有一个标志，
+  // 强制EAM任务重新计算已超时的执行器，以防一些事件在侦听器总线上触发，可能导致当前已超时的执行器列表发生变化。
   //
-  // There's also per-executor state used for this purpose, so that recomputations can be triggered
-  // only when really necessary.
+  // 还有每个执行器的状态用于此目的，因此只有在确实需要时才会触发重新计算。
   //
-  // Note that this isn't meant to, and cannot, always make the right decision about which executors
-  // are indeed timed out. For example, the EAM thread may detect a timed out executor while a new
-  // "task start" event has just been posted to the listener bus and hasn't yet been delivered to
-  // this listener. There are safeguards in other parts of the code that would prevent that executor
-  // from being removed.
+  // 注意，这并不意味着总是能够正确决定哪些执行器确实已超时。
+  // 例如，EAM线程可能会在新的“任务开始”事件刚发布到侦听器总线时检测到一个超时的执行器，并且尚未传递到该侦听器。
+  // 代码的其他部分中有防护措施，防止将该执行器从中删除。
   private val nextTimeout = new AtomicLong(Long.MaxValue)
   private var timedOutExecs = Seq.empty[(String, Int)]
 
@@ -103,8 +97,8 @@ private[spark] class ExecutorMonitor(
   }
 
   /**
-   * Returns the list of executors and their ResourceProfile id that are currently considered to
-   * be timed out. Should only be called from the EAM thread.
+   * 返回当前被认为已超时的执行器及其资源配置文件ID列表。
+   * 应仅在EAM线程中调用此方法。
    */
   def timedOutExecutors(): Seq[(String, Int)] = {
     val now = clock.nanoTime()
@@ -408,9 +402,8 @@ private[spark] class ExecutorMonitor(
     val storageLevel = event.blockUpdatedInfo.storageLevel
     val blockId = event.blockUpdatedInfo.blockId.asInstanceOf[RDDBlockId]
 
-    // SPARK-27677. When a block can be fetched from the external shuffle service, the executor can
-    // be removed without hurting the application too much, since the cached data is still
-    // available. So don't count blocks that can be served by the external service.
+    // 在可以从外部Shuffle服务获取块的情况下，
+    // 可以移除执行器而不会对应用程序造成太大影响，因为缓存的数据仍然可用。因此，不要计算可以由外部服务提供的块。
     if (storageLevel.isValid && (!fetchFromShuffleSvcEnabled || !storageLevel.useDisk)) {
       val hadCachedBlocks = exec.cachedBlocks.nonEmpty
       val blocks = exec.cachedBlocks.getOrElseUpdate(blockId.rddId,
@@ -561,10 +554,12 @@ private[spark] class ExecutorMonitor(
     }
 
     def updateTimeout(): Unit = {
-      val oldDeadline = timeoutAt
+      val oldDeadline = timeoutAt   // executor 下线时间
+
       val newDeadline = if (idleStart >= 0) {
+
         val timeout = if (cachedBlocks.nonEmpty || (shuffleIds != null && shuffleIds.nonEmpty)) {
-          val _cacheTimeout = if (cachedBlocks.nonEmpty) storageTimeoutNs else Long.MaxValue
+          val _cacheTimeout = if (cachedBlocks.nonEmpty) storageTimeoutNs else Long.MaxValue   // 如果 当前cache数据不为空则获取cache超时时间
           val _shuffleTimeout = if (shuffleIds != null && shuffleIds.nonEmpty) {
             shuffleTimeoutNs
           } else {
