@@ -30,7 +30,7 @@ import org.apache.spark.serializer.SerializerInstance
 import org.apache.spark.util.{LongAccumulator, ThreadUtils, Utils}
 
 /**
- * Runs a thread pool that deserializes and remotely fetches (if necessary) task results.
+ * 运行一个线程池，用于反序列化和远程获取（如果需要）任务结果。
  */
 private[spark] class TaskResultGetter(sparkEnv: SparkEnv, scheduler: TaskSchedulerImpl)
   extends Logging {

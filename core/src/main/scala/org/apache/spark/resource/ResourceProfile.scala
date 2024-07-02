@@ -303,8 +303,8 @@ object ResourceProfile extends Logging {
       defaultProfile match {
         case Some(prof) => prof
         case None =>
-          val taskResources = getDefaultTaskResources(conf)
-          val executorResources = getDefaultExecutorResources(conf)
+          val taskResources = getDefaultTaskResources(conf) // 获取默认的任务资源清单
+          val executorResources = getDefaultExecutorResources(conf)  // 获取默认的Executor 资源清单
           val defProf = new ResourceProfile(executorResources, taskResources)
           defProf.setToDefaultProfile()
           defaultProfile = Some(defProf)
@@ -344,6 +344,7 @@ object ResourceProfile extends Logging {
     val offheapMem = Utils.executorOffHeapMemorySizeAsMb(conf)
     ereqs.offHeapMemory(offheapMem.toString)
     val execReq = ResourceUtils.parseAllResourceRequests(conf, SPARK_EXECUTOR_PREFIX)
+
     execReq.foreach { req =>
       ereqs.resource(req.id.resourceName, req.amount, req.discoveryScript.orElse(""),
         req.vendor.orElse(""))
@@ -378,7 +379,8 @@ object ResourceProfile extends Logging {
   private[spark] def getCustomExecutorResources(
       rp: ResourceProfile): Map[String, ExecutorResourceRequest] = {
     rp.executorResources.
-      filterKeys(k => !ResourceProfile.allSupportedExecutorResources.contains(k)).toMap
+      filterKeys(k => !ResourceProfile.allSupportedExecutorResources.contains(k))
+      .toMap
   }
 
   /*

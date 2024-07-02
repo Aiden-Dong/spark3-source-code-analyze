@@ -40,41 +40,35 @@ import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.{AccumulatorV2, Clock, SystemClock, ThreadUtils, Utils}
 
 /**
- * Schedules tasks for multiple types of clusters by acting through a SchedulerBackend.
- * It can also work with a local setup by using a `LocalSchedulerBackend` and setting
- * isLocal to true. It handles common logic, like determining a scheduling order across jobs, waking
- * up to launch speculative tasks, etc.
+ * 通过 SchedulerBackend 为多种类型的集群调度任务。
+ * 它还可以通过使用 `LocalSchedulerBackend` 并将 isLocal 设置为 true 来与本地设置一起工作。
+ * 它处理常见逻辑，如确定作业之间的调度顺序、唤醒以启动推测任务等。
  *
- * Clients should first call initialize() and start(), then submit task sets through the
- * submitTasks method.
+ * 客户端应首先调用 initialize() 和 start()，然后通过 submitTasks 方法提交任务集。
  *
- * THREADING: [[SchedulerBackend]]s and task-submitting clients can call this class from multiple
- * threads, so it needs locks in public API methods to maintain its state. In addition, some
- * [[SchedulerBackend]]s synchronize on themselves when they want to send events here, and then
- * acquire a lock on us, so we need to make sure that we don't try to lock the backend while
- * we are holding a lock on ourselves.  This class is called from many threads, notably:
- *   * The DAGScheduler Event Loop
- *   * The RPCHandler threads, responding to status updates from Executors
- *   * Periodic revival of all offers from the CoarseGrainedSchedulerBackend, to accommodate delay
- *      scheduling
- *   * task-result-getter threads
+ * 线程处理：[[SchedulerBackend]] 和提交任务的客户端可以从多个线程调用此类，
+ * 因此它需要在公共 API 方法中加锁以维护其状态。
+ * 此外，一些 [[SchedulerBackend]] 在发送事件到此类时会对自身进行同步，然后获取我们的锁，
+ * 因此我们需要确保在持有自身锁时不尝试锁定后端。
+ * 此类由许多线程调用，特别是：
+ *   * DAGScheduler 事件循环
+ *   * RPCHandler 线程，响应来自执行器的状态更新
+ *   * CoarseGrainedSchedulerBackend 的所有报价的周期性恢复，以适应延迟调度
+ *   * task-result-getter 线程
  *
- * CAUTION: Any non fatal exception thrown within Spark RPC framework can be swallowed.
- * Thus, throwing exception in methods like resourceOffers, statusUpdate won't fail
- * the application, but could lead to undefined behavior. Instead, we shall use method like
- * TaskSetManger.abort() to abort a stage and then fail the application (SPARK-31485).
+ * 警告：Spark RPC 框架中的任何非致命异常都可能被吞掉。
+ * 因此，在类似 resourceOffers、statusUpdate 之类的方法中抛出异常不会使应用程序失败，但可能导致未定义的行为。
+ * 相反，我们应该使用类似 TaskSetManager.abort() 的方法来终止一个阶段，然后使应用程序失败 (SPARK-31485)。
  *
- * Delay Scheduling:
- *  Delay scheduling is an optimization that sacrifices job fairness for data locality in order to
- *  improve cluster and workload throughput. One useful definition of "delay" is how much time
- *  has passed since the TaskSet was using its fair share of resources. Since it is impractical to
- *  calculate this delay without a full simulation, the heuristic used is the time since the
- *  TaskSetManager last launched a task and has not rejected any resources due to delay scheduling
- *  since it was last offered its "fair share". A "fair share" offer is when [[resourceOffers]]'s
- *  parameter "isAllFreeResources" is set to true. A "delay scheduling reject" is when a resource
- *  is not utilized despite there being pending tasks (implemented inside [[TaskSetManager]]).
- *  The legacy heuristic only measured the time since the [[TaskSetManager]] last launched a task,
- *  and can be re-enabled by setting spark.locality.wait.legacyResetOnTaskLaunch to true.
+ * 延迟调度：
+ * 延迟调度是一种优化，它牺牲了作业公平性以换取数据本地性，从而提高集群和工作负载的吞吐量。
+ * “延迟”的一个有用定义是自 TaskSet 使用其公平份额的资源以来经过的时间。
+ * 由于在没有完整模拟的情况下计算此延迟是不切实际的，因此使用的启发式方法是
+ * 自 TaskSetManager 上次启动任务以来经过的时间，并且自上次提供其“公平份额”以来没有因延迟调度而拒绝任何资源。
+ * 当 [[resourceOffers]] 的参数 “isAllFreeResources” 设置为 true 时，这是一个“公平份额”提议。
+ * “延迟调度拒绝”是指尽管有待处理任务但资源未被利用（在 [[TaskSetManager]] 内实现）。
+ * 传统的启发式方法只测量自 [[TaskSetManager]] 上次启动任务以来的时间，
+ * 可以通过将 spark.locality.wait.legacyResetOnTaskLaunch 设置为 true 来重新启用。
  */
 private[spark] class TaskSchedulerImpl(
     val sc: SparkContext,
@@ -89,40 +83,40 @@ private[spark] class TaskSchedulerImpl(
     this(sc, sc.conf.get(config.TASK_MAX_FAILURES))
   }
 
-  // Lazily initializing healthTrackerOpt to avoid getting empty ExecutorAllocationClient,
-  // because ExecutorAllocationClient is created after this TaskSchedulerImpl.
+  // 延迟初始化 healthTrackerOpt 以避免获得空的 ExecutorAllocationClient，
+  // 因为 ExecutorAllocationClient 在 TaskSchedulerImpl 之后创建。
   private[scheduler] lazy val healthTrackerOpt = maybeCreateHealthTracker(sc)
 
   val conf = sc.conf
 
-  // How often to check for speculative tasks
+  // 检查推测任务的频率。 (spark.speculation.interval)
   val SPECULATION_INTERVAL_MS = conf.get(SPECULATION_INTERVAL)
 
-  // Duplicate copies of a task will only be launched if the original copy has been running for
-  // at least this amount of time. This is to avoid the overhead of launching speculative copies
-  // of tasks that are very short.
+  // 只有在原始任务副本运行时间至少达到此时间后，才会启动任务的重复副本。
+  // 这是为了避免启动非常短的任务的推测副本所带来的开销。 (spark.speculation.minTaskRuntime)
   val MIN_TIME_TO_SPECULATION = conf.get(SPECULATION_MIN_THRESHOLD)
 
+  // 推测执行调度线程
   private val speculationScheduler =
     ThreadUtils.newDaemonSingleThreadScheduledExecutor("task-scheduler-speculation")
 
-  // Threshold above which we warn user initial TaskSet may be starved
+  // 超过此阈值时，我们会警告用户初始 TaskSet 可能会被饿死。
   val STARVATION_TIMEOUT_MS = conf.getTimeAsMs("spark.starvation.timeout", "15s")
 
-  // CPUs to request per task
+  // 每个任务请求的 CPU 数量。 (spark.task.cpus)
   val CPUS_PER_TASK = conf.get(config.CPUS_PER_TASK)
 
-  // TaskSetManagers are not thread safe, so any access to one should be synchronized
-  // on this class.  Protected by `this`
+  // TaskSetManagers 不是线程安全的，
+  // 因此对它的任何访问都应在此类上同步。由 `this` 保护。
+  // (stageId -> (attempId -> task_set_manager))
   private val taskSetsByStageIdAndAttempt = new HashMap[Int, HashMap[Int, TaskSetManager]]
 
   // keyed by taskset
-  // value is true if the task set has not rejected any resources due to locality
-  // since the timer was last reset
+  // 如果 taskset 自上次重置计时器以来没有因本地性而拒绝任何资源，则值为 true
   private val noRejectsSinceLastReset = new mutable.HashMap[TaskSet, Boolean]()
   private val legacyLocalityWaitReset = conf.get(LEGACY_LOCALITY_WAIT_RESET)
 
-  // Protected by `this`
+  // taskId -> tasksetmanager
   private[scheduler] val taskIdToTaskSetManager = new ConcurrentHashMap[Long, TaskSetManager]
   // Protected by `this`
   val taskIdToExecutorId = new HashMap[Long, String]
@@ -134,21 +128,22 @@ private[spark] class TaskSchedulerImpl(
   // Incrementing task IDs
   val nextTaskId = new AtomicLong(0)
 
-  // IDs of the tasks running on each executor
+  // 每个 executor 上运行的 task id 集合
   private val executorIdToRunningTaskIds = new HashMap[String, HashSet[Long]]
 
-  // We add executors here when we first get decommission notification for them. Executors can
-  // continue to run even after being asked to decommission, but they will eventually exit.
+  // 当我们第一次收到executor的 decommission 通知时，我们将它们添加到这里。
+  // 即使在要求它们停用decommission后，executor 仍然可以继续运行，但最终它们会退出。
   val executorsPendingDecommission = new HashMap[String, ExecutorDecommissionState]
 
   def runningTasksByExecutors: Map[String, Int] = synchronized {
     executorIdToRunningTaskIds.toMap.mapValues(_.size).toMap
   }
 
-  // The set of executors we have on each host; this is used to compute hostsAlive, which
-  // in turn is used to decide when we can attain data locality on a given host
+  // host -> executorIds 集合， 这用于计算 hostsAlive，
+  // 进而用于决定何时可以在给定主机上实现数据本地性。
   protected val hostToExecutors = new HashMap[String, HashSet[String]]
 
+  // rack -> hosts 集合
   protected val hostsByRack = new HashMap[String, HashSet[String]]
 
   protected val executorIdToHost = new HashMap[String, String]
@@ -160,12 +155,14 @@ private[spark] class TaskSchedulerImpl(
   // Listener object to pass upcalls into
   var dagScheduler: DAGScheduler = null
 
+  // 调度后端
   var backend: SchedulerBackend = null
 
   val mapOutputTracker = SparkEnv.get.mapOutputTracker.asInstanceOf[MapOutputTrackerMaster]
 
   private var schedulableBuilder: SchedulableBuilder = null
-  // default scheduler is FIFO
+
+  // 调度模式 : FIFO, FAIR
   private val schedulingModeConf = conf.get(SCHEDULER_MODE)
   val schedulingMode: SchedulingMode =
     try {
@@ -176,11 +173,13 @@ private[spark] class TaskSchedulerImpl(
           schedulingModeConf)
     }
 
+  // 调度资源池
   val rootPool: Pool = new Pool("", schedulingMode, 0, 0)
 
-  // This is a var so that we can reset it for testing purposes.
+  // 获取远程执行结果.
   private[spark] var taskResultGetter = new TaskResultGetter(sc.env, this)
 
+  // spark.barrier.sync.timeout
   private lazy val barrierSyncTimeout = conf.get(config.BARRIER_SYNC_TIMEOUT)
 
   private[scheduler] var barrierCoordinator: RpcEndpoint = null
@@ -200,6 +199,7 @@ private[spark] class TaskSchedulerImpl(
     this.dagScheduler = dagScheduler
   }
 
+  // 初始化调度后端跟作业调度策略
   def initialize(backend: SchedulerBackend): Unit = {
     this.backend = backend
     schedulableBuilder = {
@@ -219,7 +219,7 @@ private[spark] class TaskSchedulerImpl(
   def newTaskId(): Long = nextTaskId.getAndIncrement()
 
   override def start(): Unit = {
-    backend.start()
+    backend.start()  // 开启调度资源你后端
 
     if (!isLocal && conf.get(SPECULATION_ENABLED)) {
       logInfo("Starting speculative execution thread")
@@ -238,24 +238,26 @@ private[spark] class TaskSchedulerImpl(
     logInfo("Adding task set " + taskSet.id + " with " + tasks.length + " tasks "
       + "resource profile " + taskSet.resourceProfileId)
     this.synchronized {
+      // 对每一个 taskset 创建一个 TaskSetManager
       val manager = createTaskSetManager(taskSet, maxTaskFailures)
       val stage = taskSet.stageId
-      val stageTaskSets =
-        taskSetsByStageIdAndAttempt.getOrElseUpdate(stage, new HashMap[Int, TaskSetManager])
 
-      // Mark all the existing TaskSetManagers of this stage as zombie, as we are adding a new one.
-      // This is necessary to handle a corner case. Let's say a stage has 10 partitions and has 2
-      // TaskSetManagers: TSM1(zombie) and TSM2(active). TSM1 has a running task for partition 10
-      // and it completes. TSM2 finishes tasks for partition 1-9, and thinks he is still active
-      // because partition 10 is not completed yet. However, DAGScheduler gets task completion
-      // events for all the 10 partitions and thinks the stage is finished. If it's a shuffle stage
-      // and somehow it has missing map outputs, then DAGScheduler will resubmit it and create a
-      // TSM3 for it. As a stage can't have more than one active task set managers, we must mark
-      // TSM2 as zombie (it actually is).
+      val stageTaskSets = taskSetsByStageIdAndAttempt.getOrElseUpdate(stage, new HashMap[Int, TaskSetManager])
+
+      // 将此 stage 的所有现有 TaskSetManagers 标记为僵尸，因为我们正在添加一个新的。
+      // 这是处理一个边缘情况所必需的。假设一个 stage 有 10 个分区，并且有 2 个 TaskSetManagers：
+      //   - TSM1（僵尸）和 TSM2（活跃）。
+      //   - TSM1 正在运行分区 10 的task并完成。
+      //   - TSM2 完成了分区 1-9 的任务，并认为自己仍然活跃，因为分区 10 尚未完成。
+      // 然而，DAGScheduler 收到了所有 10 个分区的任务完成事件，并认为stage已经完成。
+      // 如果这是一个 shuffle stage，并且由于某种原因缺少 map 输出，DAGScheduler 将重新提交它并为其创建一个 TSM3。
+      // 由于一个 stage 不能有多个活跃的 TaskSetManager，我们必须将 TSM2 标记为僵尸（它实际上是）。
       stageTaskSets.foreach { case (_, ts) =>
-        ts.isZombie = true
+        ts.isZombie = true   // 僵尸标识
       }
+
       stageTaskSets(taskSet.stageAttemptId) = manager
+      // 将 tasksetManager 加入调度构建器
       schedulableBuilder.addTaskSetManager(manager, manager.taskSet.properties)
 
       if (!isLocal && !hasReceivedTask) {
@@ -276,13 +278,14 @@ private[spark] class TaskSchedulerImpl(
     backend.reviveOffers()
   }
 
-  // Label as private[scheduler] to allow tests to swap in different task set managers if necessary
+  // 标记为 private[scheduler]，以便在必要时允许测试更换不同的任务集管理器。
   private[scheduler] def createTaskSetManager(
       taskSet: TaskSet,
       maxTaskFailures: Int): TaskSetManager = {
     new TaskSetManager(this, taskSet, maxTaskFailures, healthTrackerOpt, clock)
   }
 
+  // 取消任务执行
   override def cancelTasks(stageId: Int, interruptThread: Boolean): Unit = synchronized {
     logInfo("Cancelling stage " + stageId)
     // Kill all running tasks for the stage.
@@ -311,18 +314,18 @@ private[spark] class TaskSchedulerImpl(
     }
   }
 
+  // 杀死当前任务的运行
   override def killAllTaskAttempts(
       stageId: Int,
       interruptThread: Boolean,
       reason: String): Unit = synchronized {
     logInfo(s"Killing all running tasks in stage $stageId: $reason")
+
     taskSetsByStageIdAndAttempt.get(stageId).foreach { attempts =>
       attempts.foreach { case (_, tsm) =>
-        // There are two possible cases here:
-        // 1. The task set manager has been created and some tasks have been scheduled.
-        //    In this case, send a kill signal to the executors to kill the task.
-        // 2. The task set manager has been created but no tasks have been scheduled. In this case,
-        //    simply continue.
+        // 这里有两种可能的情况：
+        // 1. 任务集管理器已创建并且一些任务已被调度。 在这种情况下，向执行器发送终止信号以终止任务。
+        // 2. 任务集管理器已创建但尚未调度任何任务。在这种情况下，继续执行。
         tsm.runningTasksSet.foreach { tid =>
           taskIdToExecutorId.get(tid).foreach { execId =>
             backend.killTask(tid, execId, interruptThread, reason)
@@ -337,9 +340,8 @@ private[spark] class TaskSchedulerImpl(
   }
 
   /**
-   * Called to indicate that all task attempts (including speculated tasks) associated with the
-   * given TaskSetManager have completed, so state associated with the TaskSetManager should be
-   * cleaned up.
+   * 调用此方法以指示与给定 TaskSetManager 关联的所有task attempt（包括推测任务）均已完成，
+   * 因此应清理与 TaskSetManager 相关的状态。
    */
   def taskSetFinished(manager: TaskSetManager): Unit = synchronized {
     taskSetsByStageIdAndAttempt.get(manager.taskSet.stageId).foreach { taskSetsForStage =>
@@ -355,18 +357,15 @@ private[spark] class TaskSchedulerImpl(
   }
 
   /**
-   * Offers resources to a single [[TaskSetManager]] at a given max allowed [[TaskLocality]].
+   * 在给定的最大允许 [[TaskLocality]] 上向单个 [[TaskSetManager]] 提供资源。
    *
-   * @param taskSet task set manager to offer resources to
-   * @param maxLocality max locality to allow when scheduling
-   * @param shuffledOffers shuffled resource offers to use for scheduling,
-   *                       remaining resources are tracked by below fields as tasks are scheduled
-   * @param availableCpus  remaining cpus per offer,
-   *                       value at index 'i' corresponds to shuffledOffers[i]
-   * @param availableResources remaining resources per offer,
-   *                           value at index 'i' corresponds to shuffledOffers[i]
-   * @param tasks tasks scheduled per offer, value at index 'i' corresponds to shuffledOffers[i]
-   * @return tuple of (no delay schedule rejects?, option of min locality of launched task)
+   * @param taskSet 要向其提供资源的任务集管理器
+   * @param maxLocality 调度时允许的最大本地性
+   * @param shuffledOffers 用于调度的混排资源提供，随着任务调度，下面字段跟踪剩余资源
+   * @param availableCpus 每个提供的剩余 CPU 数量， 索引 'i' 处的值对应于 shuffledOffers[i]
+   * @param availableResources 每个提供的剩余资源，  索引 'i' 处的值对应于 shuffledOffers[i]
+   * @param tasks 每个提供调度的任务，索引 'i' 处的值对应于 shuffledOffers[i]
+   * @return tuple (没有延迟调度拒绝?, 启动任务的最小本地性的选项)
    */
   private def resourceOfferSingleTaskSet(
       taskSet: TaskSetManager,
@@ -376,29 +375,42 @@ private[spark] class TaskSchedulerImpl(
       availableResources: Array[Map[String, Buffer[String]]],
       tasks: IndexedSeq[ArrayBuffer[TaskDescription]])
     : (Boolean, Option[TaskLocality]) = {
+
     var noDelayScheduleRejects = true
     var minLaunchedLocality: Option[TaskLocality] = None
-    // nodes and executors that are excluded for the entire application have already been
-    // filtered out by this point
+
+    // 遍历每个主机节点
     for (i <- 0 until shuffledOffers.size) {
-      val execId = shuffledOffers(i).executorId
+
+      val execId = shuffledOffers(i).executorId  // 资源单元
       val host = shuffledOffers(i).host
+
       val taskSetRpID = taskSet.taskSet.resourceProfileId
-      // make the resource profile id a hard requirement for now - ie only put tasksets
-      // on executors where resource profile exactly matches.
+
+      // 目前将资源配置文件 ID 作为硬性要求 —— 即仅将任务集放在资源配置文件完全匹配的执行器上。
       if (taskSetRpID == shuffledOffers(i).resourceProfileId) {
-        val taskResAssignmentsOpt = resourcesMeetTaskRequirements(taskSet, availableCpus(i),
-          availableResources(i))
+
+        // STEP-1 : 校验改节点是否满足改 taskset 上的task 资源需求
+        // 主要分为 单一task上的 cpu资源需求，其他资源需求
+        val taskResAssignmentsOpt = resourcesMeetTaskRequirements(taskSet, availableCpus(i), availableResources(i))
+
+
         taskResAssignmentsOpt.foreach { taskResAssignments =>
+
           try {
             val prof = sc.resourceProfileManager.resourceProfileFromId(taskSetRpID)
             val taskCpus = ResourceProfile.getTaskCpusOrDefaultForProfile(prof, conf)
-            val (taskDescOption, didReject, index) =
-              taskSet.resourceOffer(execId, host, maxLocality, taskCpus, taskResAssignments)
+
+            // STEP-2 : 如果该资源满足以后，基于本地性，挑选一个任务在该节点上运行
+            val (taskDescOption, didReject, index) = taskSet.resourceOffer(execId, host, maxLocality, taskCpus, taskResAssignments)
+
             noDelayScheduleRejects &= !didReject
+
             for (task <- taskDescOption) {
               val (locality, resources) = if (task != null) {
+                // 表示已经成功的在改资源节点上调起一个资源
                 tasks(i) += task
+
                 addRunningTask(task.taskId, execId, taskSet)
                 (taskSet.taskInfos(task.taskId).taskLocality, task.resources)
               } else {
@@ -410,13 +422,12 @@ private[spark] class TaskSchedulerImpl(
               }
 
               minLaunchedLocality = minTaskLocality(minLaunchedLocality, Some(locality))
-              availableCpus(i) -= taskCpus
+              availableCpus(i) -= taskCpus     // 占有cpu资源
               assert(availableCpus(i) >= 0)
+              // 移除资源
               resources.foreach { case (rName, rInfo) =>
-                // Remove the first n elements from availableResources addresses, these removed
-                // addresses are the same as that we allocated in taskResourceAssignments since it's
-                // synchronized. We don't remove the exact addresses allocated because the current
-                // approach produces the identical result with less time complexity.
+                // 从 availableResources 地址中移除前 n 个元素，这些被移除的地址与我们在 taskResourceAssignments 中分配的地址是相同的，因为它是同步的。
+                // 我们不移除确切分配的地址，因为当前的方法可以在相同的时间复杂度下产生相同的结果。
                 availableResources(i)(rName).remove(0, rInfo.addresses.size)
               }
             }
@@ -434,7 +445,7 @@ private[spark] class TaskSchedulerImpl(
   }
 
   /**
-   * Add the running task to TaskScheduler's related structures
+   * 将正在运行的任务添加到 TaskScheduler 相关结构中
    */
   private def addRunningTask(tid: Long, execId: String, taskSet: TaskSetManager): Unit = {
     taskIdToTaskSetManager.put(tid, taskSet)
@@ -443,40 +454,49 @@ private[spark] class TaskSchedulerImpl(
   }
 
   /**
-   * Check whether the resources from the WorkerOffer are enough to run at least one task.
-   * Returns None if the resources don't meet the task requirements, otherwise returns
-   * the task resource assignments to give to the next task. Note that the assignments maybe
-   * be empty if no custom resources are used.
+   * 检查 WorkerOffer 的资源是否足以运行至少一个任务。
+   * 如果资源不满足任务要求，则返回 None，否则返回分配给下一个任务的任务资源分配。
+   * 请注意，如果不使用自定义资源，则分配可能为空。
    */
   private def resourcesMeetTaskRequirements(
       taskSet: TaskSetManager,
       availCpus: Int,
       availWorkerResources: Map[String, Buffer[String]]
-      ): Option[Map[String, ResourceInformation]] = {
+    ): Option[Map[String, ResourceInformation]] = {
+
+    // 每个taskset 挂一个 resourceProfileId -- 绑定的stageId, 默认0
+    // 获取当前 stage 的资源需求
     val rpId = taskSet.taskSet.resourceProfileId
     val taskSetProf = sc.resourceProfileManager.resourceProfileFromId(rpId)
+
+    // 每个task的cpu需求数
     val taskCpus = ResourceProfile.getTaskCpusOrDefaultForProfile(taskSetProf, conf)
-    // check if the ResourceProfile has cpus first since that is common case
+
+    // cpu 不满足，则标识没有合适的计算资源
     if (availCpus < taskCpus) return None
-    // only look at the resource other then cpus
+
+    // 仅查看 CPU 以外的资源。
     val tsResources = ResourceProfile.getCustomTaskResources(taskSetProf)
+
+    // 如果没有合适的资源项，则返回空
     if (tsResources.isEmpty) return Some(Map.empty)
+
     val localTaskReqAssign = HashMap[String, ResourceInformation]()
-    // we go through all resources here so that we can make sure they match and also get what the
-    // assignments are for the next task
+
+    // 我们在这里检查所有资源，以确保它们匹配，并获取下一个任务的资源分配。
     for ((rName, taskReqs) <- tsResources) {
-      val taskAmount = taskSetProf.getSchedulerTaskResourceAmount(rName)
-      availWorkerResources.get(rName) match {
+      val taskAmount = taskSetProf.getSchedulerTaskResourceAmount(rName)  // 获取当前task 的资源需求
+      availWorkerResources.get(rName) match {                             // 可用资源大小
         case Some(workerRes) =>
-          if (workerRes.size >= taskAmount) {
-            localTaskReqAssign.put(rName, new ResourceInformation(rName,
-              workerRes.take(taskAmount).toArray))
+          if (workerRes.size >= taskAmount) {    // 判断当前资源是否
+            localTaskReqAssign.put(rName, new ResourceInformation(rName, workerRes.take(taskAmount).toArray))
           } else {
             return None
           }
         case None => return None
       }
     }
+
     Some(localTaskReqAssign.toMap)
   }
 
@@ -495,20 +515,25 @@ private[spark] class TaskSchedulerImpl(
   }
 
   /**
-   * Called by cluster manager to offer resources on workers. We respond by asking our active task
-   * sets for tasks in order of priority. We fill each node with tasks in a round-robin manner so
-   * that tasks are balanced across the cluster.
+   * 由 ClusterManager 调用，以在 Worker 节点上提供资源。我们通过按照优先级顺序向我们的活动taskset 请求任务来响应。
+   * 我们以轮询的方式填充每个 node，以便任务在集群中均衡分配。
    */
   def resourceOffers(
       offers: IndexedSeq[WorkerOffer],
       isAllFreeResources: Boolean = true): Seq[Seq[TaskDescription]] = synchronized {
-    // Mark each worker as alive and remember its hostname
-    // Also track if new executor is added
+
+    // 将每个工作节点标记为活跃并记住其主机名, 同时跟踪是否添加了新的执行器
     var newExecAvail = false
+
+    // 维护资源信息
+    // (host -> (executor1,executor2, ...))
+    // (executorId -> host)
+    // (executorId -> (runningTasks...))
     for (o <- offers) {
       if (!hostToExecutors.contains(o.host)) {
         hostToExecutors(o.host) = new HashSet[String]()
       }
+
       if (!executorIdToRunningTaskIds.contains(o.executorId)) {
         hostToExecutors(o.host) += o.executorId
         executorAdded(o.executorId, o.host)
@@ -517,16 +542,20 @@ private[spark] class TaskSchedulerImpl(
         newExecAvail = true
       }
     }
+
+    // 更新机架信息
+    //  (rack -> (hosts...))
     val hosts = offers.map(_.host).distinct
     for ((host, Some(rack)) <- hosts.zip(getRacksForHosts(hosts))) {
       hostsByRack.getOrElseUpdate(rack, new HashSet[String]()) += host
     }
 
-    // Before making any offers, include any nodes whose expireOnFailure timeout has expired. Do
-    // this here to avoid a separate thread and added synchronization overhead, and also because
-    // updating the excluded executors and nodes is only relevant when task offers are being made.
+    // 在提出任何任务之前，包含所有超时失效的节点。
+    // 在这里进行此操作以避免单独的线程和额外的同步开销，
+    // 同时因为在任务提出时更新被排除的执行器和节点才有意义。
     healthTrackerOpt.foreach(_.applyExcludeOnFailureTimeout())
 
+    // 过滤掉被提出的 Executor 或者是 Node
     val filteredOffers = healthTrackerOpt.map { healthTracker =>
       offers.filter { offer =>
         !healthTracker.isNodeExcluded(offer.host) &&
@@ -534,29 +563,33 @@ private[spark] class TaskSchedulerImpl(
       }
     }.getOrElse(offers)
 
+    // 散列当前的work节点
     val shuffledOffers = shuffleOffers(filteredOffers)
-    // Build a list of tasks to assign to each worker.
-    // Note the size estimate here might be off with different ResourceProfiles but should be
-    // close estimate
-    val tasks = shuffledOffers.map(o => new ArrayBuffer[TaskDescription](o.cores / CPUS_PER_TASK))
+
+    // 任务分配数组，用于存放待运行任务的插槽
+    val tasks = shuffledOffers.map(o => new ArrayBuffer[TaskDescription](o.cores / CPUS_PER_TASK))  // [Task-ArrayBuffer-1, Task-ArrayBuffer-2, ...]
+    // 可用的cpu集合
+    val availableCpus = shuffledOffers.map(o => o.cores).toArray           // [CoreNum-1, CoreNum-2, ...]
+
     val availableResources = shuffledOffers.map(_.resources).toArray
-    val availableCpus = shuffledOffers.map(o => o.cores).toArray
     val resourceProfileIds = shuffledOffers.map(o => o.resourceProfileId).toArray
+
+    // 获取基于优先级排队的 tasksetManager 队列
     val sortedTaskSets = rootPool.getSortedTaskSetQueue
+
     for (taskSet <- sortedTaskSets) {
-      logDebug("parentName: %s, name: %s, runningTasks: %s".format(
-        taskSet.parent.name, taskSet.name, taskSet.runningTasks))
+      logDebug("parentName: %s, name: %s, runningTasks: %s".format(taskSet.parent.name, taskSet.name, taskSet.runningTasks))
       if (newExecAvail) {
+        // 重新计算任务本地性
         taskSet.executorAdded()
       }
     }
 
-    // Take each TaskSet in our scheduling order, and then offer it to each node in increasing order
-    // of locality levels so that it gets a chance to launch local tasks on all of them.
-    // NOTE: the preferredLocality order: PROCESS_LOCAL, NODE_LOCAL, NO_PREF, RACK_LOCAL, ANY
+    // 按照调度顺序取出每个 TaskSet，然后按照本地性级别从低到高的顺序将其分配给每个节点，
+    // 以便每个节点都有机会启动本地任务。
+    // 注意：preferredLocality 的顺序是：PROCESS_LOCAL, NODE_LOCAL, NO_PREF, RACK_LOCAL, ANY。
     for (taskSet <- sortedTaskSets) {
-      // we only need to calculate available slots if using barrier scheduling, otherwise the
-      // value is -1
+      // 如果使用障碍调度，我们只需要计算可用槽位，否则值为 -1。
       val numBarrierSlotsAvailable = if (taskSet.isBarrier) {
         val rpId = taskSet.taskSet.resourceProfileId
         val availableResourcesAmount = availableResources.map { resourceMap =>
@@ -578,16 +611,27 @@ private[spark] class TaskSchedulerImpl(
           s"because the barrier taskSet requires ${taskSet.numTasks} slots, while the total " +
           s"number of available slots is $numBarrierSlotsAvailable.")
       } else {
+
         var launchedAnyTask = false
         var noDelaySchedulingRejects = true
         var globalMinLocality: Option[TaskLocality] = None
+
+        // 迭代当前任务的数据本地性选择
         for (currentMaxLocality <- taskSet.myLocalityLevels) {
           var launchedTaskAtCurrentMaxLocality = false
           do {
+            // 在指定的 taskset 使用 shuffledOffers 调度 task 任务
+            // 每次 resourceOfferSingleTaskSet 对每个 offers 最多只调度一个 task,
+            // 这是为了让作业均匀分布在所有的 work 上
             val (noDelayScheduleReject, minLocality) = resourceOfferSingleTaskSet(
-              taskSet, currentMaxLocality, shuffledOffers, availableCpus,
-              availableResources, tasks)
-            launchedTaskAtCurrentMaxLocality = minLocality.isDefined
+              taskSet,
+              currentMaxLocality,
+              shuffledOffers,
+              availableCpus,
+              availableResources,
+              tasks)
+
+            launchedTaskAtCurrentMaxLocality = minLocality.isDefined // 表示可能会调用多次
             launchedAnyTask |= launchedTaskAtCurrentMaxLocality
             noDelaySchedulingRejects &= noDelayScheduleReject
             globalMinLocality = minTaskLocality(globalMinLocality, minLocality)
@@ -662,8 +706,7 @@ private[spark] class TaskSchedulerImpl(
               "recently scheduled.")
             // Notify ExecutorAllocationManager as well as other subscribers that a task now
             // recently becomes schedulable
-            dagScheduler.unschedulableTaskSetRemoved(taskSet.taskSet.stageId,
-              taskSet.taskSet.stageAttemptId)
+            dagScheduler.unschedulableTaskSetRemoved(taskSet.taskSet.stageId, taskSet.taskSet.stageAttemptId)
             unschedulableTaskSetToExpiryTime.clear()
           }
         }
@@ -1070,6 +1113,7 @@ private[spark] class TaskSchedulerImpl(
     healthTrackerOpt.foreach(_.handleRemovedExecutor(executorId))
   }
 
+  // 向DAGScheduler 告知有新的工作节点加入
   def executorAdded(execId: String, host: String): Unit = {
     dagScheduler.executorAdded(execId, host)
   }

@@ -25,13 +25,11 @@ import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.AccumulatorV2
 
 /**
- * Low-level task scheduler interface, currently implemented exclusively by
- * [[org.apache.spark.scheduler.TaskSchedulerImpl]].
- * This interface allows plugging in different task schedulers. Each TaskScheduler schedules tasks
- * for a single SparkContext. These schedulers get sets of tasks submitted to them from the
- * DAGScheduler for each stage, and are responsible for sending the tasks to the cluster, running
- * them, retrying if there are failures, and mitigating stragglers. They return events to the
- * DAGScheduler.
+ * 低级任务调度器接口，目前仅由 [[org.apache.spark.scheduler.TaskSchedulerImpl]] 实现。
+ * 此接口允许插入不同的TaskScheduler。每个 TaskScheduler 为单个 SparkContext 调度任务。
+ * 这些调度器从 DAGScheduler 接收每个阶段提交的一组任务，
+ * 并负责将任务发送到集群、运行任务、在失败时重试以及缓解慢节点。
+ * 它们将事件返回给 DAGScheduler。
  */
 private[spark] trait TaskScheduler {
 
@@ -43,47 +41,45 @@ private[spark] trait TaskScheduler {
 
   def start(): Unit
 
-  // Invoked after system has successfully initialized (typically in spark context).
-  // Yarn uses this to bootstrap allocation of resources based on preferred locations,
-  // wait for executor registrations, etc.
+  // 在系统成功初始化后调用（通常在 Spark 上下文中）。
+  // Yarn 使用此方法根据首选位置启动资源分配，等待执行器注册等。
   def postStartHook(): Unit = { }
 
-  // Disconnect from the cluster.
+  // 与集群断开连接。
   def stop(): Unit
 
+  // 提交一个TaskSet 去调度执行
   // Submit a sequence of tasks to run.
   def submitTasks(taskSet: TaskSet): Unit
 
-  // Kill all the tasks in a stage and fail the stage and all the jobs that depend on the stage.
-  // Throw UnsupportedOperationException if the backend doesn't support kill tasks.
+  // 杀死stage中的所有任务，并使该stage及所有依赖该stage的作业失败。
+  // 如果后端不支持杀死任务，则抛出 UnsupportedOperationException 异常。
   def cancelTasks(stageId: Int, interruptThread: Boolean): Unit
 
   /**
-   * Kills a task attempt.
-   * Throw UnsupportedOperationException if the backend doesn't support kill a task.
+   * 杀死一个task attempt。
+   * 如果后端不支持杀死任务，则抛出 UnsupportedOperationException 异常。
    *
    * @return Whether the task was successfully killed.
    */
   def killTaskAttempt(taskId: Long, interruptThread: Boolean, reason: String): Boolean
 
-  // Kill all the running task attempts in a stage.
-  // Throw UnsupportedOperationException if the backend doesn't support kill tasks.
+  // 杀死阶段中所有正在运行的任务尝试。
+  // 如果后端不支持杀死任务，则抛出 UnsupportedOperationException 异常。
   def killAllTaskAttempts(stageId: Int, interruptThread: Boolean, reason: String): Unit
 
-  // Notify the corresponding `TaskSetManager`s of the stage, that a partition has already completed
-  // and they can skip running tasks for it.
+  // 通知阶段对应的 `TaskSetManager`，某个分区已经完成，它们可以跳过运行该分区的任务。
   def notifyPartitionCompletion(stageId: Int, partitionId: Int): Unit
 
-  // Set the DAG scheduler for upcalls. This is guaranteed to be set before submitTasks is called.
+  // 设置用于上调的 DAG 调度器。确保在调用 submitTasks 之前设置此调度器。
   def setDAGScheduler(dagScheduler: DAGScheduler): Unit
 
-  // Get the default level of parallelism to use in the cluster, as a hint for sizing jobs.
+  // 获取集群中用于作业大小调整的默认并行度级别提示。
   def defaultParallelism(): Int
 
   /**
-   * Update metrics for in-progress tasks and executor metrics, and let the master know that the
-   * BlockManager is still alive. Return true if the driver knows about the given block manager.
-   * Otherwise, return false, indicating that the block manager should re-register.
+   * 更新正在进行的任务和执行器指标的指标，并告知主节点 BlockManager 仍然活着。
+   * 如果驱动程序知道给定的块管理器，则返回 true。否则，返回 false，表示块管理器应重新注册。
    */
   def executorHeartbeatReceived(
       execId: String,
@@ -92,34 +88,34 @@ private[spark] trait TaskScheduler {
       executorUpdates: Map[(Int, Int), ExecutorMetrics]): Boolean
 
   /**
-   * Get an application ID associated with the job.
+   * 获取与作业关联的应用程序 ID.
    *
    * @return An application ID
    */
   def applicationId(): String = appId
 
   /**
-   * Process a decommissioning executor.
+   * 处理一个正在下线的执行器。
    */
   def executorDecommission(executorId: String, decommissionInfo: ExecutorDecommissionInfo): Unit
 
   /**
-   * If an executor is decommissioned, return its corresponding decommission info
+   * 如果执行器已经下线，返回其对应的下线信息。
    */
   def getExecutorDecommissionState(executorId: String): Option[ExecutorDecommissionState]
 
   /**
-   * Process a lost executor
+   * 处理丢失的执行器。
    */
   def executorLost(executorId: String, reason: ExecutorLossReason): Unit
 
   /**
-   * Process a removed worker
+   * 处理移除的工作节点。
    */
   def workerRemoved(workerId: String, host: String, message: String): Unit
 
   /**
-   * Get an application's attempt ID associated with the job.
+   * 获取与作业关联的应用程序尝试 ID。
    *
    * @return An application's Attempt ID
    */

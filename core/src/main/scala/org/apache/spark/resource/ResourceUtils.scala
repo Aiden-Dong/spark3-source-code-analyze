@@ -330,28 +330,30 @@ private[spark] object ResourceUtils extends Logging {
   }
 
   /**
-   * This function is similar to getOrDiscoverallResources, except for it uses the ResourceProfile
-   * information instead of the application level configs.
+   * 此函数类似于 getOrDiscoverAllResources，不同之处在于它使用 ResourceProfile 信息而不是应用程序级别的配置。
    *
-   * It first looks to see if resource were explicitly specified in the resources file
-   * (this would include specified address assignments and it only specified in certain
-   * cluster managers) and then it looks at the ResourceProfile to get
-   * any others not specified in the file. The resources not explicitly set in the file require a
-   * discovery script for it to run to get the addresses of the resource.
-   * It also verifies the resource allocation meets required amount for each resource.
+   * 它首先查看资源文件中是否明确指定了资源（这包括指定的地址分配，并且只在某些集群管理器中指定），
+   * 然后查看 ResourceProfile 以获取文件中未指定的任何其他资源。
+   * 文件中未明确设置的资源需要一个发现脚本来运行以获取资源的地址。
+   * 它还验证了资源分配是否满足每种资源的要求量。
    *
-   * @return a map from resource name to resource info
+   * @return 一个从资源名称到资源信息的映射
    */
   def getOrDiscoverAllResourcesForResourceProfile(
       resourcesFileOpt: Option[String],
       componentName: String,
       resourceProfile: ResourceProfile,
       sparkConf: SparkConf): Map[String, ResourceInformation] = {
+    // 从文件中获取资源配置
     val fileAllocated = parseAllocated(resourcesFileOpt, componentName)
     val fileAllocResMap = fileAllocated.map(a => (a.id.resourceName, a.toResourceInformation)).toMap
-    // only want to look at the ResourceProfile for resources not in the resources file
+
+
+    // 将文件中的资源清单跟配置资源清单合并
+    // resourceProfile.executorResources
     val execReq = ResourceProfile.getCustomExecutorResources(resourceProfile)
     val filteredExecreq = execReq.filterNot { case (rname, _) => fileAllocResMap.contains(rname) }
+
     val rpAllocations = filteredExecreq.map { case (rName, execRequest) =>
       val resourceId = new ResourceID(componentName, rName)
       val scriptOpt = emptyStringToOptional(execRequest.discoveryScript)
@@ -360,6 +362,7 @@ private[spark] object ResourceUtils extends Logging {
       val addrs = discoverResource(sparkConf, resourceReq).addresses
       (rName, new ResourceInformation(rName, addrs))
     }
+
     val allAllocations = fileAllocResMap ++ rpAllocations
     assertAllResourceAllocationsMatchResourceProfile(allAllocations, execReq)
     allAllocations

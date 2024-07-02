@@ -246,7 +246,7 @@ private[spark] class TaskSetManager(
   // last reset the locality wait timer, and move up a level when localityWaits[curLevel] expires.
   // We then move down if we manage to launch a "more local" task when resetting the timer
   private val legacyLocalityWaitReset = conf.get(LEGACY_LOCALITY_WAIT_RESET)
-  private var currentLocalityIndex = 0 // Index of our current locality level in validLocalityLevels
+  private var currentLocalityIndex = 0  // 我们当前本地性级别在 validLocalityLevels 中的索引。
   private var lastLocalityWaitResetTime = clock.getTimeMillis()  // Time we last reset locality wait
 
   // Time to wait at each level
@@ -301,10 +301,9 @@ private[spark] class TaskSetManager(
   }
 
   /**
-   * Dequeue a pending task from the given list and return its index.
-   * Return None if the list is empty.
-   * This method also cleans up any tasks in the list that have already
-   * been launched, since we want that to happen lazily.
+   * 从给定列表中出队一个待处理任务，并返回其索引。
+   * 如果列表为空，则返回 None。
+   * 该方法还会清理已经启动的列表中的任何任务，因为我们希望这种清理是懒惰进行的。
    */
   private def dequeueTaskFromList(
       execId: String,
@@ -346,17 +345,16 @@ private[spark] class TaskSetManager(
   }
 
   /**
-   * Dequeue a pending task for a given node and return its index and locality level.
-   * Only search for tasks matching the given locality constraint.
+   * 为给定节点出队一个待处理任务，并返回其索引和本地性级别。
+   * 只搜索符合给定本地性约束的任务。
    *
-   * @return An option containing (task index within the task set, locality, is speculative?)
+   * @return 一个选项，包含（任务在任务集中的索引，本地性级别，是否为推测性任务？）
    */
   private def dequeueTask(
       execId: String,
       host: String,
       maxLocality: TaskLocality.Value): Option[(Int, TaskLocality.Value, Boolean)] = {
-    // Tries to schedule a regular task first; if it returns None, then schedules
-    // a speculative task
+    // 首先尝试调度常规任务；如果返回 None，则调度一个推测性任务。
     dequeueTaskHelper(execId, host, maxLocality, false).orElse(
       dequeueTaskHelper(execId, host, maxLocality, true))
   }
@@ -369,7 +367,10 @@ private[spark] class TaskSetManager(
     if (speculative && speculatableTasks.isEmpty) {
       return None
     }
+
+    // 获取当前等待调度的tasks
     val pendingTaskSetToUse = if (speculative) pendingSpeculatableTasks else pendingTasks
+
     def dequeue(list: ArrayBuffer[Int]): Option[Int] = {
       val task = dequeueTaskFromList(execId, host, list, speculative)
       if (speculative && task.isDefined) {
@@ -421,22 +422,21 @@ private[spark] class TaskSetManager(
   }
 
   /**
-   * Respond to an offer of a single executor from the scheduler by finding a task
+   * 通过找到一个任务来响应调度器提供的单个执行器资源
    *
-   * NOTE: this function is either called with a maxLocality which
-   * would be adjusted by delay scheduling algorithm or it will be with a special
-   * NO_PREF locality which will be not modified
+   * 注意：此函数要么被调用时带有 maxLocality，此值会被延迟调度算法调整，
+   * 要么带有特殊的 NO_PREF 本地性，此值不会被修改
    *
-   * @param execId the executor Id of the offered resource
-   * @param host  the host Id of the offered resource
-   * @param maxLocality the maximum locality we want to schedule the tasks at
-   * @param taskCpus the number of CPUs for the task
-   * @param taskResourceAssignments the resource assignments for the task
+   * @param execId 提供的资源的执行器 ID
+   * @param host 提供的资源的主机 ID
+   * @param maxLocality 我们希望调度任务的最大本地性
+   * @param taskCpus 任务所需的 CPU 数量
+   * @param taskResourceAssignments 任务的资源分配
    *
-   * @return Triple containing:
-   *         (TaskDescription of launched task if any,
-   *         rejected resource due to delay scheduling?,
-   *         dequeued task index)
+   * @return 包含以下内容的 Triple：
+   *         (如果有已启动的任务，返回 TaskDescription，
+   *         因延迟调度而被拒绝的资源？，
+   *         被出队的任务索引)
    */
   @throws[TaskNotSerializableException]
   def resourceOffer(
@@ -445,12 +445,13 @@ private[spark] class TaskSetManager(
       maxLocality: TaskLocality.TaskLocality,
       taskCpus: Int = sched.CPUS_PER_TASK,
       taskResourceAssignments: Map[String, ResourceInformation] = Map.empty)
-    : (Option[TaskDescription], Boolean, Int) =
-  {
+    : (Option[TaskDescription], Boolean, Int) = {
+
     val offerExcluded = taskSetExcludelistHelperOpt.exists { excludeList =>
       excludeList.isNodeExcludedForTaskSet(host) ||
         excludeList.isExecutorExcludedForTaskSet(execId)
     }
+
     if (!isZombie && !offerExcluded) {
       val curTime = clock.getTimeMillis()
 
@@ -465,34 +466,38 @@ private[spark] class TaskSetManager(
       }
 
       var dequeuedTaskIndex: Option[Int] = None
-      val taskDescription =
-        dequeueTask(execId, host, allowedLocality)
-          .map { case (index, taskLocality, speculative) =>
-            dequeuedTaskIndex = Some(index)
-            if (legacyLocalityWaitReset && maxLocality != TaskLocality.NO_PREF) {
-              resetDelayScheduleTimer(Some(taskLocality))
-            }
-            if (isBarrier) {
-              barrierPendingLaunchTasks(index) =
-                BarrierPendingLaunchTask(
+
+      // 从队列中取出一个任务来
+      // 注意可能会获取不到
+      val taskDescription = dequeueTask(execId, host, allowedLocality)
+          .map {
+            case (index, taskLocality, speculative) =>
+              dequeuedTaskIndex = Some(index)
+              if (legacyLocalityWaitReset && maxLocality != TaskLocality.NO_PREF) {
+                resetDelayScheduleTimer(Some(taskLocality))
+              }
+              if (isBarrier) {
+                barrierPendingLaunchTasks(index) =
+                  BarrierPendingLaunchTask(
+                    execId,
+                    host,
+                    index,
+                    taskLocality,
+                    taskResourceAssignments)
+                // return null since the TaskDescription for the barrier task is not ready yet
+                null
+              } else {
+                // 如果获取成功。则当前任务做运行前准备
+                prepareLaunchingTask(
                   execId,
                   host,
                   index,
                   taskLocality,
-                  taskResourceAssignments)
-              // return null since the TaskDescription for the barrier task is not ready yet
-              null
-            } else {
-              prepareLaunchingTask(
-                execId,
-                host,
-                index,
-                taskLocality,
-                speculative,
-                taskCpus,
-                taskResourceAssignments,
-                curTime)
-            }
+                  speculative,
+                  taskCpus,
+                  taskResourceAssignments,
+                  curTime)
+              }
           }
       val hasPendingTasks = pendingTasks.all.nonEmpty || pendingSpeculatableTasks.all.nonEmpty
       val hasScheduleDelayReject =
@@ -515,7 +520,7 @@ private[spark] class TaskSetManager(
       taskResourceAssignments: Map[String, ResourceInformation],
       launchTime: Long): TaskDescription = {
     // Found a task; do some bookkeeping and return a task description
-    val task = tasks(index)
+    val task = tasks(index)    // 获取到调度的 Task
     val taskId = sched.newTaskId()
     // Do various bookkeeping
     copiesRunning(index) += 1
@@ -523,6 +528,7 @@ private[spark] class TaskSetManager(
     val info = new TaskInfo(
       taskId, index, attemptNum, task.partitionId, launchTime,
       execId, host, taskLocality, speculative)
+
     taskInfos(taskId) = info
     taskAttempts(index) = info :: taskAttempts(index)
     // Serialize and return the task
@@ -554,7 +560,9 @@ private[spark] class TaskSetManager(
       s"partition ${task.partitionId}, $taskLocality, ${serializedTask.limit()} bytes) " +
       s"taskResourceAssignments ${taskResourceAssignments}")
 
+    // 调度作业运行
     sched.dagScheduler.taskStarted(task, info)
+
     new TaskDescription(
       taskId,
       attemptNum,
@@ -590,7 +598,9 @@ private[spark] class TaskSetManager(
   }
 
   /**
-   * Get the level we can launch tasks according to delay scheduling, based on current wait time.
+   * 根据当前等待时间，通过延迟调度获取我们可以启动任务的级别。
+   * 是根据当前的资源和调度策略，确定任务调度时允许的本地性级别。
+   * 它帮助 Spark 调度器在不同的本地性级别之间进行选择，以便在性能和资源利用之间取得平衡。
    */
   private def getAllowedLocalityLevel(curTime: Long): TaskLocality.TaskLocality = {
     // Remove the scheduled or finished tasks lazily
@@ -1175,17 +1185,19 @@ private[spark] class TaskSetManager(
   }
 
   /**
-   * Compute the locality levels used in this TaskSet. Assumes that all tasks have already been
-   * added to queues using addPendingTask.
-   *
+   * 计算在此 TaskSet 中使用的本地性级别。假设所有任务已经使用 addPendingTask 添加到队列中。
    */
   private def computeValidLocalityLevels(): Array[TaskLocality.TaskLocality] = {
     import TaskLocality.{PROCESS_LOCAL, NODE_LOCAL, NO_PREF, RACK_LOCAL, ANY}
     val levels = new ArrayBuffer[TaskLocality.TaskLocality]
+
+    // 如果当前任务的数据倾向container正好有可用资源
     if (!pendingTasks.forExecutor.isEmpty &&
         pendingTasks.forExecutor.keySet.exists(sched.isExecutorAlive(_))) {
       levels += PROCESS_LOCAL
     }
+
+    // 如果当前任务的数据倾向节点正好有可用资源
     if (!pendingTasks.forHost.isEmpty &&
         pendingTasks.forHost.keySet.exists(sched.hasExecutorsAliveOnHost(_))) {
       levels += NODE_LOCAL
@@ -1206,15 +1218,18 @@ private[spark] class TaskSetManager(
     recomputeLocality()
   }
 
+  // 重新计算数据本地性
   def recomputeLocality(): Unit = {
-    // A zombie TaskSetManager may reach here while executorLost happens
+    // 当 executor 丢失时，一个僵尸 TaskSetManager 可能会到达这里。
     if (isZombie) return
+
     val previousLocalityIndex = currentLocalityIndex
     val previousLocalityLevel = myLocalityLevels(currentLocalityIndex)
     val previousMyLocalityLevels = myLocalityLevels
     myLocalityLevels = computeValidLocalityLevels()
     localityWaits = myLocalityLevels.map(getLocalityWait)
     currentLocalityIndex = getLocalityIndex(previousLocalityLevel)
+
     if (currentLocalityIndex > previousLocalityIndex) {
       // SPARK-31837: If the new level is more local, shift to the new most local locality
       // level in terms of better data locality. For example, say the previous locality
@@ -1239,31 +1254,25 @@ private[spark] object TaskSetManager {
 }
 
 /**
- * Set of pending tasks for various levels of locality: executor, host, rack,
- * noPrefs and anyPrefs. These collections are actually
- * treated as stacks, in which new tasks are added to the end of the
- * ArrayBuffer and removed from the end. This makes it faster to detect
- * tasks that repeatedly fail because whenever a task failed, it is put
- * back at the head of the stack. These collections may contain duplicates
- * for two reasons:
- * (1): Tasks are only removed lazily; when a task is launched, it remains
- * in all the pending lists except the one that it was launched from.
- * (2): Tasks may be re-added to these lists multiple times as a result
- * of failures.
- * Duplicates are handled in dequeueTaskFromList, which ensures that a
- * task hasn't already started running before launching it.
+ * 不同本地性级别（executor、host、rack、noPrefs 和 all）的待处理任务集合。
+ * 这些集合实际上被当作栈来处理，新任务被添加到 ArrayBuffer 的末尾，并从末尾移除。
+ * 这样可以更快地检测到反复失败的任务，因为每当任务失败时，它会被放回栈顶。
+ * 这些集合可能包含重复项，原因有两个：
+ * (1) 任务只被懒惰地移除；当一个任务被启动时，它仍然保留在除启动任务的那个队列之外的所有待处理列表中。
+ * (2) 由于失败，任务可能多次被重新添加到这些列表中。
+ * 在 dequeueTaskFromList 中处理重复项，该方法确保在启动任务之前任务尚未开始运行。
  */
 private[scheduler] class PendingTasksByLocality {
 
-  // Set of pending tasks for each executor.
+  // 每个executor的待处理任务集合。
   val forExecutor = new HashMap[String, ArrayBuffer[Int]]
-  // Set of pending tasks for each host. Similar to pendingTasksForExecutor, but at host level.
+  // 每个host的待处理任务集合。类似于 pendingTasksForExecutor，但在主机级别。
   val forHost = new HashMap[String, ArrayBuffer[Int]]
-  // Set containing pending tasks with no locality preferences.
+  // 包含无本地性偏好待处理任务的集合。
   val noPrefs = new ArrayBuffer[Int]
-  // Set of pending tasks for each rack -- similar to the above.
+  // 每个机架的待处理任务集合 —— 类似于上面的集合。
   val forRack = new HashMap[String, ArrayBuffer[Int]]
-  // Set containing all pending tasks (also used as a stack, as above).
+  // 包含所有待处理任务的集合（也用作栈，如上所述）。
   val all = new ArrayBuffer[Int]
 }
 

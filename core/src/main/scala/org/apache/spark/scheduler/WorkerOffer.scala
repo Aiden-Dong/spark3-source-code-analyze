@@ -22,15 +22,14 @@ import scala.collection.mutable.Buffer
 import org.apache.spark.resource.ResourceProfile
 
 /**
- * Represents free resources available on an executor.
+ * 表示在执行器上可用的空闲资源。
  */
 private[spark]
 case class WorkerOffer(
-    executorId: String,
-    host: String,
-    cores: Int,
-    // `address` is an optional hostPort string, it provide more useful information than `host`
-    // when multiple executors are launched on the same host.
-    address: Option[String] = None,
+    executorId: String,    // executor Id
+    host: String,          // 主机名
+    cores: Int,            // cpu 数量
+    address: Option[String] = None,  // `address` 是一个可选的 hostPort 字符串，当在同一个主机上启动多个执行器时，
+                                     // 它比 `host` 提供了更多有用的信息。
     resources: Map[String, Buffer[String]] = Map.empty,
     resourceProfileId: Int = ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID)

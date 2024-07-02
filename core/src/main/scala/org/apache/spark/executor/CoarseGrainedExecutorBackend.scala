@@ -102,8 +102,16 @@ private[spark] class CoarseGrainedExecutorBackend(
       // This is a very fast action so we can use "ThreadUtils.sameThread"
       driver = Some(ref)
       env.executorBackend = Option(this)
-      ref.ask[Boolean](RegisterExecutor(executorId, self, hostname, cores, extractLogUrls,
-        extractAttributes, _resources, resourceProfile.id))
+      ref.ask[Boolean](RegisterExecutor(executorId,   // executorId
+          self,
+          hostname,                                 // 主机标识
+          cores,                                    // 当前Executor的Core数量
+          extractLogUrls,                           // log 日志链接地址
+          extractAttributes,                        // 额外配置属性地址
+          _resources,
+          resourceProfile.id                        // 0
+        )
+      )
     }(ThreadUtils.sameThread).onComplete {
       case Success(_) =>
         self.send(RegisteredExecutor)
@@ -135,9 +143,9 @@ private[spark] class CoarseGrainedExecutorBackend(
     logDebug(s"Resource profile id is: ${resourceProfile.id}")
     Utils.withContextClassLoader(urlClassLoader) {
       val resources = getOrDiscoverAllResourcesForResourceProfile(
-        resourcesFileOpt,
-        SPARK_EXECUTOR_PREFIX,
-        resourceProfile,
+        resourcesFileOpt,   // 资源文件选项
+        SPARK_EXECUTOR_PREFIX, // spark.executor
+        resourceProfile,     // driver 获取到的资源清单
         env.conf)
       logResourceInfo(SPARK_EXECUTOR_PREFIX, resources)
       resources
@@ -404,20 +412,25 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
       resourceProfileId: Int)
 
   def main(args: Array[String]): Unit = {
-    val createFn: (RpcEnv, Arguments, SparkEnv, ResourceProfile) =>
-      CoarseGrainedExecutorBackend = { case (rpcEnv, arguments, env, resourceProfile) =>
-      new CoarseGrainedExecutorBackend(rpcEnv, arguments.driverUrl, arguments.executorId,
-        arguments.bindAddress, arguments.hostname, arguments.cores,
-        env, arguments.resourcesFileOpt, resourceProfile)
+    val createFn: (RpcEnv, Arguments, SparkEnv, ResourceProfile) => CoarseGrainedExecutorBackend = {
+      case (rpcEnv, arguments, env, resourceProfile) =>
+        new CoarseGrainedExecutorBackend(rpcEnv,
+          arguments.driverUrl,
+          arguments.executorId,
+          arguments.bindAddress,
+          arguments.hostname,
+          arguments.cores,
+          env,
+          arguments.resourcesFileOpt,
+          resourceProfile
+        )
     }
     run(parseArguments(args, this.getClass.getCanonicalName.stripSuffix("$")), createFn)
     System.exit(0)
   }
 
-  def run(
-      arguments: Arguments,
-      backendCreateFn: (RpcEnv, Arguments, SparkEnv, ResourceProfile) =>
-        CoarseGrainedExecutorBackend): Unit = {
+  def run(arguments: Arguments,
+      backendCreateFn: (RpcEnv, Arguments, SparkEnv, ResourceProfile) => CoarseGrainedExecutorBackend): Unit = {
 
     Utils.initDaemon(log)
 
@@ -449,6 +462,7 @@ private[spark] object CoarseGrainedExecutorBackend extends Logging {
         }
       }
 
+      // 获取Spark配置信息
       val cfg = driver.askSync[SparkAppConfig](RetrieveSparkAppConfig(arguments.resourceProfileId))
       val props = cfg.sparkProperties ++ Seq[(String, String)](("spark.app.id", arguments.appId))
       fetcher.shutdown()

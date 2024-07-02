@@ -20,34 +20,25 @@ package org.apache.spark.resource
 import org.apache.spark.annotation.{Evolving, Since}
 
 /**
- * An Executor resource request. This is used in conjunction with the [[ResourceProfile]] to
- * programmatically specify the resources needed for an RDD that will be applied at the
- * stage level.
+ * Executor 资源请求。这与 [[ResourceProfile]] 结合使用，以编程方式指定将在阶段级别应用的 RDD 所需的资源。
  *
- * This is used to specify what the resource requirements are for an Executor and how
- * Spark can find out specific details about those resources. Not all the parameters are
- * required for every resource type. Resources like GPUs are supported and have same limitations
- * as using the global spark configs spark.executor.resource.gpu.*. The amount, discoveryScript,
- * and vendor parameters for resources are all the same parameters a user would specify through the
- * configs: spark.executor.resource.{resourceName}.{amount, discoveryScript, vendor}.
+ * 这用于指定Executor的资源需求以及 Spark 如何获取这些资源的具体细节。并非所有参数都适用于每种资源类型。
+ * 支持 GPU 等资源，并且具有与使用全局 Spark 配置 spark.executor.resource.gpu.* 相同的限制。
+ * 用户通过配置指定的资源数量、发现脚本和供应商参数与全局配置参数相同：spark.executor.resource.{resourceName}.{amount, discoveryScript, vendor}。
  *
- * For instance, a user wants to allocate an Executor with GPU resources on YARN. The user has
- * to specify the resource name (gpu), the amount or number of GPUs per Executor,
- * the discovery script would be specified so that when the Executor starts up it can
- * discovery what GPU addresses are available for it to use because YARN doesn't tell
- * Spark that, then vendor would not be used because its specific for Kubernetes.
+ * 例如，用户希望在 YARN 上分配带有 GPU 资源的执行器。用户需要指定资源名称（gpu），每个执行器的 GPU 数量，
+ * 还需要指定发现脚本，以便执行器启动时可以发现可用的 GPU 地址，因为 YARN 不会告诉 Spark 这些信息。
+ * 供应商参数不需要使用，因为它特定于 Kubernetes。
  *
- * See the configuration and cluster specific docs for more details.
+ * 有关更多详细信息，请参阅配置和集群特定的文档。
  *
- * Use [[ExecutorResourceRequests]] class as a convenience API.
+ * 使用 [[ExecutorResourceRequests]] 类作为便捷的 API。
  *
- * @param resourceName Name of the resource
- * @param amount Amount requesting
- * @param discoveryScript Optional script used to discover the resources. This is required on some
- *                        cluster managers that don't tell Spark the addresses of the resources
- *                        allocated. The script runs on Executors startup to discover the addresses
- *                        of the resources available.
- * @param vendor Optional vendor, required for some cluster managers
+ * @param resourceName 资源名称
+ * @param amount 请求的数量
+ * @param discoveryScript 可选的脚本，用于发现资源。在某些集群管理器上这是必需的，因为它们不会告诉 Spark 分配资源的地址。
+ *                        该脚本在执行器启动时运行，以发现可用资源的地址。
+ * @param vendor 可选的供应商参数，对某些集群管理器是必需的。
  */
 @Evolving
 @Since("3.1.0")

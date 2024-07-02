@@ -26,7 +26,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 
 /**
- * A Schedulable entity that represents collection of Pools or TaskSetManagers
+ * 一个代表 Pool 或 TaskSetManager 集合的可调度实体。
  */
 private[spark] class Pool(
     val poolName: String,

@@ -21,9 +21,8 @@ import org.apache.spark.resource.ResourceProfile
 import org.apache.spark.storage.BlockManagerId
 
 /**
- * A backend interface for scheduling systems that allows plugging in different ones under
- * TaskSchedulerImpl. We assume a Mesos-like model where the application gets resource offers as
- * machines become available and can launch tasks on them.
+ * 调度系统的后端接口，允许在 TaskSchedulerImpl 下插入不同的调度系统。
+ * 我们假设一个类似 Mesos 的模型，其中应用程序在机器可用时获得资源提供并可以在其上启动任务。
  */
 private[spark] trait SchedulerBackend {
   private val appId = "spark-application-" + System.currentTimeMillis
@@ -31,18 +30,18 @@ private[spark] trait SchedulerBackend {
   def start(): Unit
   def stop(): Unit
   /**
-   * Update the current offers and schedule tasks
+   * 更新当前的资源提供并调度任务
    */
   def reviveOffers(): Unit
   def defaultParallelism(): Int
 
   /**
-   * Requests that an executor kills a running task.
+   * 请求执行器终止正在运行的任务。
    *
-   * @param taskId Id of the task.
-   * @param executorId Id of the executor the task is running on.
-   * @param interruptThread Whether the executor should interrupt the task thread.
-   * @param reason The reason for the task kill.
+   * @param taskId 任务的 ID。
+   * @param executorId 执行任务的执行器的 ID。
+   * @param interruptThread 执行器是否应中断任务线程。
+   * @param reason 任务终止的原因。
    */
   def killTask(
       taskId: Long,

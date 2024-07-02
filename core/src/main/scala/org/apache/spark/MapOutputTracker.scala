@@ -640,13 +640,9 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
 }
 
 /**
- * Driver-side class that keeps track of the location of the map output of a stage.
- *
- * The DAGScheduler uses this class to (de)register map output statuses and to look up statistics
- * for performing locality-aware reduce task scheduling.
- *
- * ShuffleMapStage uses this class for tracking available / missing outputs in order to determine
- * which tasks need to be run.
+ * 在driver 端跟踪 stage的 map 输出位置的类。
+ * DAGScheduler 使用此类来（取消）注册 map 输出状态，并查找统计信息以执行局部性感知的 reduce 任务调度。
+ * ShuffleMapStage 使用此类来跟踪可用/丢失的输出，以确定需要运行哪些任务。
  */
 private[spark] class MapOutputTrackerMaster(
     conf: SparkConf,
