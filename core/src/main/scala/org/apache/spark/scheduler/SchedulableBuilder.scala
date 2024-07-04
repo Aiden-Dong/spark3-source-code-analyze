@@ -56,6 +56,12 @@ private[spark] class FIFOSchedulableBuilder(val rootPool: Pool)
   }
 }
 
+/***
+ * FairSchedulableBuilder 是 Apache Spark 中用于构建公平调度器（Fair Scheduler）的一个类。
+ * 公平调度器是 Spark 提供的多任务调度策略之一，其主要目标是确保所有作业和任务能够公平地共享集群资源。
+ * @param rootPool
+ * @param sc
+ */
 private[spark] class FairSchedulableBuilder(val rootPool: Pool, sc: SparkContext)
   extends SchedulableBuilder with Logging {
 
