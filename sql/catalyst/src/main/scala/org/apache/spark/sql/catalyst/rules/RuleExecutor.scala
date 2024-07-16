@@ -170,8 +170,7 @@ abstract class RuleExecutor[TreeType <: TreeNode[_]] extends Logging {
   }
 
   /**
-   * Executes the batches of rules defined by the subclass, and also tracks timing info for each
-   * rule using the provided tracker.
+   * 执行子类定义的规则批次，并使用提供的追踪器跟踪每个规则的时间信息。
    * @see [[execute]]
    */
   def executeAndTrack(plan: TreeType, tracker: QueryPlanningTracker): TreeType = {
@@ -197,6 +196,7 @@ abstract class RuleExecutor[TreeType <: TreeNode[_]] extends Logging {
         this.getClass.getName.stripSuffix("$"))
     }
 
+    // batch 遍历
     batches.foreach { batch =>
       val batchStartPlan = curPlan
       var iteration = 1
@@ -205,10 +205,12 @@ abstract class RuleExecutor[TreeType <: TreeNode[_]] extends Logging {
 
       // Run until fix point (or the max number of iterations as specified in the strategy.
       while (continue) {
+        // 遍历当前 batch 的所有Role
+        // 相当于reduce 操作
         curPlan = batch.rules.foldLeft(curPlan) {
           case (plan, rule) =>
             val startTime = System.nanoTime()
-            val result = rule(plan)
+            val result = rule(plan)  // 进行分析
             val runTime = System.nanoTime() - startTime
             val effective = !result.fastEquals(plan)
 

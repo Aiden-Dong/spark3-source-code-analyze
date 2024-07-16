@@ -46,20 +46,14 @@ import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.{SparkFatalException, ThreadUtils}
 
 /**
- * A root node to execute the query plan adaptively. It splits the query plan into independent
- * stages and executes them in order according to their dependencies. The query stage
- * materializes its output at the end. When one stage completes, the data statistics of the
- * materialized output will be used to optimize the remainder of the query.
+ * 执行查询计划的自适应根节点。它将查询计划拆分为独立的阶段，并根据它们的依赖关系依次执行这些阶段。
+ * 查询阶段在结束时将其输出物化。当一个阶段完成时，物化输出的数据统计将用于优化查询的其余部分。
  *
- * To create query stages, we traverse the query tree bottom up. When we hit an exchange node,
- * and if all the child query stages of this exchange node are materialized, we create a new
- * query stage for this exchange node. The new stage is then materialized asynchronously once it
- * is created.
+ * 为了创建查询阶段，我们自下而上遍历查询树。当我们遇到一个交换节点，并且该交换节点的所有子查询阶段都已物化时，
+ * 我们为该交换节点创建一个新的查询阶段。新阶段一旦创建，就会异步地进行物化。
  *
- * When one query stage finishes materialization, the rest query is re-optimized and planned based
- * on the latest statistics provided by all materialized stages. Then we traverse the query plan
- * again and create more stages if possible. After all stages have been materialized, we execute
- * the rest of the plan.
+ * 当一个查询阶段完成物化时，根据所有物化阶段提供的最新统计数据，重新优化并计划剩余的查询。
+ * 然后我们再次遍历查询计划，并在可能的情况下创建更多阶段。所有阶段物化后，我们执行剩余的计划。
  */
 case class AdaptiveSparkPlanExec(
     inputPlan: SparkPlan,

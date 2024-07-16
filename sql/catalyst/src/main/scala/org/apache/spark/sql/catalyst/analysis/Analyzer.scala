@@ -256,7 +256,9 @@ class Analyzer(override val catalogManager: CatalogManager)
     TypeCoercion.typeCoercionRules
   }
 
+  // 定义分析规则
   override def batches: Seq[Batch] = Seq(
+    // spark.sql.analyzer.maxIterations
     Batch("Substitution", fixedPoint,
       // This rule optimizes `UpdateFields` expression chains so looks more like optimization rule.
       // However, when manipulating deeply nested schema, `UpdateFields` expression tree could be
@@ -282,7 +284,7 @@ class Analyzer(override val catalogManager: CatalogManager)
       new ResolveCatalogs(catalogManager) ::
       ResolveUserSpecifiedColumns ::
       ResolveInsertInto ::
-      ResolveRelations ::
+      ResolveRelations ::    // 表解析
       ResolvePartitionSpec ::
       ResolveFieldNameAndPosition ::
       AddMetadataColumns ::
@@ -1139,13 +1141,14 @@ class Analyzer(override val catalogManager: CatalogManager)
     }
 
     private def createRelation(
-        catalog: CatalogPlugin,
-        ident: Identifier,
-        table: Option[Table],
+        catalog: CatalogPlugin,    // catalog 解析工具
+        ident: Identifier,         // 表信息
+        table: Option[Table],      // 表 Schema
         options: CaseInsensitiveStringMap,
         isStreaming: Boolean): Option[LogicalPlan] = {
       table.map {
         case v1Table: V1Table if CatalogV2Util.isSessionCatalog(catalog) =>
+          // spark_catalog
           if (isStreaming) {
             if (v1Table.v1Table.tableType == CatalogTableType.VIEW) {
               throw QueryCompilationErrors.permanentViewNotSupportedByStreamingReadingAPIError(
@@ -1178,23 +1181,24 @@ class Analyzer(override val catalogManager: CatalogManager)
     }
 
     /**
-     * Resolves relations to v1 relation if it's a v1 table from the session catalog, or to v2
-     * relation. This is for resolving DML commands and SELECT queries.
+     * 如果是来自会话目录的 v1 表，则将关系解析为 v1 关系；否则解析为 v2 关系。
+     * 这是用于解析 DML 命令和 SELECT 查询的。
      */
     private def lookupRelation(
         u: UnresolvedRelation,
         timeTravelSpec: Option[TimeTravelSpec] = None): Option[LogicalPlan] = {
       lookupTempView(u.multipartIdentifier, u.isStreaming, timeTravelSpec.isDefined).orElse {
         expandIdentifier(u.multipartIdentifier) match {
-          case CatalogAndIdentifier(catalog, ident) =>
+          case CatalogAndIdentifier(catalog, ident) =>              // 解析 catalog
             val key = catalog.name +: ident.namespace :+ ident.name
+
             AnalysisContext.get.relationCache.get(key).map(_.transform {
               case multi: MultiInstanceRelation =>
                 val newRelation = multi.newInstance()
                 newRelation.copyTagsFrom(multi)
                 newRelation
             }).orElse {
-              val table = CatalogV2Util.loadTable(catalog, ident, timeTravelSpec)
+              val table = CatalogV2Util.loadTable(catalog, ident, timeTravelSpec)   // 加载 Table 信息
               val loaded = createRelation(catalog, ident, table, u.options, u.isStreaming)
               loaded.foreach(AnalysisContext.get.relationCache.update(key, _))
               loaded

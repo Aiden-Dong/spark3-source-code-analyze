@@ -37,7 +37,7 @@ class UnresolvedException(function: String)
   extends AnalysisException(s"Invalid call to $function on unresolved object")
 
 /**
- * Holds the name of a relation that has yet to be looked up in a catalog.
+ * 包含尚未在目录中查找的关系的名称.
  *
  * @param multipartIdentifier table name
  * @param options options to scan this relation.

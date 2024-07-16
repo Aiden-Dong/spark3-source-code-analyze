@@ -45,6 +45,7 @@ import org.apache.spark.util.Utils
 
 /**
  * Builder that produces a Hive-aware `SessionState`.
+ * [[SparkSession.sessionStateClassName()]]
  */
 class HiveSessionStateBuilder(
     session: SparkSession,
@@ -84,7 +85,7 @@ class HiveSessionStateBuilder(
    */
   override protected def analyzer: Analyzer = new Analyzer(catalogManager) {
     override val extendedResolutionRules: Seq[Rule[LogicalPlan]] =
-      new ResolveHiveSerdeTable(session) +:
+      new ResolveHiveSerdeTable(session``) +:
         new FindDataSourceTable(session) +:
         new ResolveSQLOnFile(session) +:
         new FallBackFileSourceV2(session) +:

@@ -529,20 +529,17 @@ abstract class TreeNode[BaseType <: TreeNode[BaseType]] extends Product with Tre
   }
 
   /**
-   * Returns a copy of this node where `rule` has been recursively applied to the tree.
-   * When `rule` does not apply to a given node it is left unchanged.
-   * Users should not expect a specific directionality. If a specific directionality is needed,
-   * transformDown or transformUp should be used.
+   * 返回一个此节点的副本，其中 `rule` 已递归应用于树。
+   * 当 `rule` 不适用于给定节点时，该节点保持不变。
+   * 用户不应期望特定的方向性。如果需要特定的方向性，应使用 transformDown 或 transformUp。
    *
-   * @param rule   the function used to transform this nodes children
-   * @param cond   a Lambda expression to prune tree traversals. If `cond.apply` returns false
-   *               on a TreeNode T, skips processing T and its subtree; otherwise, processes
-   *               T and its subtree recursively.
-   * @param ruleId is a unique Id for `rule` to prune unnecessary tree traversals. When it is
-   *               UnknownRuleId, no pruning happens. Otherwise, if `rule` (with id `ruleId`)
-   *               has been marked as in effective on a TreeNode T, skips processing T and its
-   *               subtree. Do not pass it if the rule is not purely functional and reads a
-   *               varying initial state for different invocations.
+   * @param rule   用于转换此节点子节点的函数
+   * @param cond   用于修剪树遍历的 Lambda 表达式。如果 `cond.apply` 对树节点 T 返回 false，
+   *               则跳过处理 T 及其子树；否则，递归处理 T 及其子树。
+   * @param ruleId 是 `rule` 的唯一 Id，用于修剪不必要的树遍历。当其值为 UnknownRuleId 时，
+   *               不进行修剪。否则，如果 `rule`（具有 id `ruleId`）已在树节点 T 上标记为无效，
+   *               则跳过处理 T 及其子树。如果规则不是纯函数并且在不同调用中读取不同的初始状态，
+   *               则不要传递它。
    */
   def transformWithPruning(cond: TreePatternBits => Boolean,
     ruleId: RuleId = UnknownRuleId)(rule: PartialFunction[BaseType, BaseType])

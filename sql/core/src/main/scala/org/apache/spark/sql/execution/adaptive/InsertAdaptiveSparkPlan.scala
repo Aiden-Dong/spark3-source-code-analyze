@@ -32,10 +32,9 @@ import org.apache.spark.sql.execution.exchange.Exchange
 import org.apache.spark.sql.internal.SQLConf
 
 /**
- * This rule wraps the query plan with an [[AdaptiveSparkPlanExec]], which executes the query plan
- * and re-optimize the plan during execution based on runtime data statistics.
+ * 此规则将查询计划包装在 [[AdaptiveSparkPlanExec]] 中，该执行计划根据运行时数据统计在执行过程中重新优化计划。
  *
- * Note that this rule is stateful and thus should not be reused across query executions.
+ * 注意，此规则是有状态的，因此不应在多次查询执行中重用。
  */
 case class InsertAdaptiveSparkPlan(
     adaptiveExecutionContext: AdaptiveExecutionContext) extends Rule[SparkPlan] {
@@ -48,7 +47,7 @@ case class InsertAdaptiveSparkPlan(
     case _: CommandResultExec => plan
     case c: DataWritingCommandExec => c.copy(child = apply(c.child))
     case c: V2CommandExec => c.withNewChildren(c.children.map(apply))
-    case _ if shouldApplyAQE(plan, isSubquery) =>
+    case _ if shouldApplyAQE(plan, isSubquery) =>  // AQE 优化
       if (supportAdaptive(plan)) {
         try {
           // Plan sub-queries recursively and pass in the shared stage cache for exchange reuse.

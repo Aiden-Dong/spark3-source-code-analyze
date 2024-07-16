@@ -46,11 +46,9 @@ import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.util.Utils
 
 /**
- * The primary workflow for executing relational queries using Spark.  Designed to allow easy
- * access to the intermediate phases of query execution for developers.
- *
- * While this is not a public class, we should avoid changing the function names for the sake of
- * changing them, because a lot of developers use the feature for debugging.
+ * 使用 Spark 执行关系查询的主要工作流程。
+ * 设计为使开发人员可以轻松访问查询执行的中间阶段。
+ * 虽然这不是一个公共类，但为了避免改变函数名称，我们不应随意更改它们，因为许多开发人员使用此功能进行调试。
  */
 class QueryExecution(
     val sparkSession: SparkSession,
@@ -71,6 +69,7 @@ class QueryExecution(
     }
   }
 
+  // 分析逻辑树
   lazy val analyzed: LogicalPlan = executePhase(QueryPlanningTracker.ANALYSIS) {
     // We can't clone `logical` here, which will reset the `_analyzed` flag.
     sparkSession.sessionState.analyzer.executeAndCheck(logical, tracker)
