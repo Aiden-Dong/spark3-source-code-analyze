@@ -609,19 +609,15 @@ abstract class TreeNode[BaseType <: TreeNode[BaseType]] extends Product with Tre
   }
 
   /**
-   * Returns a copy of this node where `rule` has been recursively applied first to all of its
-   * children and then itself (post-order). When `rule` does not apply to a given node, it is left
-   * unchanged.
+   * 返回此节点的副本，其中 `rule` 递归地首先应用于其所有子节点，然后应用于其自身（后序遍历）。
+   * 当 `rule` 不适用于给定节点时，该节点保持不变。
    *
-   * @param rule   the function used to transform this nodes children
-   * @param cond   a Lambda expression to prune tree traversals. If `cond.apply` returns false
-   *               on a TreeNode T, skips processing T and its subtree; otherwise, processes
-   *               T and its subtree recursively.
-   * @param ruleId is a unique Id for `rule` to prune unnecessary tree traversals. When it is
-   *               UnknownRuleId, no pruning happens. Otherwise, if `rule` (with id `ruleId`)
-   *               has been marked as in effective on a TreeNode T, skips processing T and its
-   *               subtree. Do not pass it if the rule is not purely functional and reads a
-   *               varying initial state for different invocations.
+   * @param rule   用于转换此节点子节点的函数
+   * @param cond   一个 Lambda 表达式，用于修剪树遍历。如果 `cond.apply` 对 TreeNode T 返回 false，
+   *               则跳过处理 T 及其子树；否则，递归处理 T 及其子树。
+   * @param ruleId 用于修剪不必要的树遍历的 `rule` 的唯一 ID。当它是 UnknownRuleId 时，不进行修剪。
+   *               否则，如果 `rule`（具有 ID `ruleId`）已被标记为对 TreeNode T 无效，则跳过处理 T 及其子树。
+   *               如果 `rule` 不是纯函数且在不同调用中读取不同的初始状态，请不要传递它。
    */
   def transformUpWithPruning(cond: TreePatternBits => Boolean,
     ruleId: RuleId = UnknownRuleId)(rule: PartialFunction[BaseType, BaseType])

@@ -29,7 +29,8 @@ import org.apache.spark.sql.vectorized.ColumnarBatch
 /**
  * 多线程或多进程之间交换数据的操作符的基类。
  * 交换是实现并行性的关键类。
- * 虽然实现方式有很大不同，但概念类似于 Goetz Graefe 在《Volcano -- An Extensible and Parallel Query Evaluation System》中描述的交换操作符。
+ * 虽然实现方式有很大不同，但概念类似于 Goetz Graefe 在
+ * 《Volcano -- An Extensible and Parallel Query Evaluation System》中描述的交换操作符。
  */
 abstract class Exchange extends UnaryExecNode {
   override def output: Seq[Attribute] = child.output

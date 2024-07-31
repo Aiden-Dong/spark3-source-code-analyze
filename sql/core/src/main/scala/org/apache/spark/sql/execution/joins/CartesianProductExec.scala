@@ -57,6 +57,12 @@ class UnsafeCartesianRDD(
 }
 
 
+/**
+ * CROSS JOIN 类型
+ * @param left
+ * @param right
+ * @param condition
+ */
 case class CartesianProductExec(
     left: SparkPlan,
     right: SparkPlan,

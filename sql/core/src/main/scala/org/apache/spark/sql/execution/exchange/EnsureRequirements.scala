@@ -28,19 +28,9 @@ import org.apache.spark.sql.execution.joins.{ShuffledHashJoinExec, SortMergeJoin
 import org.apache.spark.sql.internal.SQLConf
 
 /**
- * Ensures that the [[org.apache.spark.sql.catalyst.plans.physical.Partitioning Partitioning]]
- * of input data meets the
- * [[org.apache.spark.sql.catalyst.plans.physical.Distribution Distribution]] requirements for
- * each operator by inserting [[ShuffleExchangeExec]] Operators where required.  Also ensure that
- * the input partition ordering requirements are met.
- *
- * @param optimizeOutRepartition A flag to indicate that if this rule should optimize out
- *                               user-specified repartition shuffles or not. This is mostly true,
- *                               but can be false in AQE when AQE optimization may change the plan
- *                               output partitioning and need to retain the user-specified
- *                               repartition shuffles in the plan.
- * @param requiredDistribution The root required distribution we should ensure. This value is used
- *                             in AQE in case we change final stage output partitioning.
+ * 确保输入数据的 [[org.apache.spark.sql.catalyst.plans.physical.Partitioning Partitioning]]
+ * 满足每个操作符的 [[org.apache.spark.sql.catalyst.plans.physical.Distribution Distribution]] 要求，
+ * 在必要时插入 [[ShuffleExchangeExec]] 操作符。同时确保满足输入分区排序的要求。
  */
 case class EnsureRequirements(
     optimizeOutRepartition: Boolean = true,

@@ -252,7 +252,7 @@ object ShuffleExchangeExec {
           // 对于哈希分区，分区键已经是有效的分区 ID
           // 因为我们使用 HashPartitioning.partitionIdExpression 生成分区键。
           override def getPartition(key: Any): Int = key.asInstanceOf[Int]
-        }internal/config/package.scala
+        }
 
       case RangePartitioning(sortingExpressions, numPartitions) =>   // 范围分区
         // Extract only fields used for sorting to avoid collecting large fields that does not

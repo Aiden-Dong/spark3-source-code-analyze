@@ -93,6 +93,7 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
       }
     }
 
+    // 计算每个 shuffle stage 的合并 shuffle 算子树
     val specsMap = mutable.HashMap.empty[Int, Seq[ShufflePartitionSpec]]
     // Coalesce partitions for each coalesce group independently.
     coalesceGroups.zip(minNumPartitionsByGroup).foreach { case (shuffleStages, minNumPartitions) =>
