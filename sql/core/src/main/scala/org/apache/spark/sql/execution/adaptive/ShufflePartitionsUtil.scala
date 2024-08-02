@@ -28,23 +28,20 @@ object ShufflePartitionsUtil extends Logging {
   final val MERGED_PARTITION_FACTOR = 1.2
 
   /**
-   * Coalesce the partitions from multiple shuffles, either in their original states, or applied
-   * with skew handling partition specs. If called on partitions containing skew partition specs,
-   * this method will keep the skew partition specs intact and only coalesce the partitions outside
-   * the skew sections.
+   * 合并多个 shuffle 的分区，可以是它们的原始状态，或应用了倾斜处理的分区规格。
+   * 如果在包含倾斜分区规格的分区上调用此方法，它将保留倾斜分区规格不变，
+   * 仅合并倾斜部分之外的分区。
    *
-   * This method will return an empty result if the shuffles have been coalesced already, or if
-   * they do not have the same number of partitions, or if the coalesced result is the same as the
-   * input partition layout.
+   * 如果 shuffle 已经合并，或它们没有相同的分区数量，或合并结果与输入分区布局相同，
+   * 则此方法将返回空结果。
    *
-   * @return A sequence of sequence of [[ShufflePartitionSpec]]s, which each inner sequence as the
-   *         new partition specs for its corresponding shuffle after coalescing. If Nil is returned,
-   *         then no coalescing is applied.
+   * @return [[ShufflePartitionSpec]] 的序列，每个内序列作为合并后相应 shuffle 的新分区规格。
+   *         如果返回 Nil，则没有应用合并。
    */
   def coalescePartitions(
-      mapOutputStatistics: Seq[Option[MapOutputStatistics]],
-      inputPartitionSpecs: Seq[Option[Seq[ShufflePartitionSpec]]],
-      advisoryTargetSize: Long,
+      mapOutputStatistics: Seq[Option[MapOutputStatistics]],          // 每个Stage 的Shuffle 分区信息
+      inputPartitionSpecs: Seq[Option[Seq[ShufflePartitionSpec]]],    // 每个 stage 输入分区信息
+      advisoryTargetSize: Long,                                       // 目的调整大小
       minNumPartitions: Int,
       minPartitionSize: Long): Seq[Seq[ShufflePartitionSpec]] = {
     assert(mapOutputStatistics.length == inputPartitionSpecs.length)
@@ -53,24 +50,24 @@ object ShufflePartitionsUtil extends Logging {
       return Seq.empty
     }
 
-    // If `minNumPartitions` is very large, it is possible that we need to use a value less than
-    // `advisoryTargetSize` as the target size of a coalesced task.
+    // 计算出当前并联stage 的总的输入数据量
     val totalPostShuffleInputSize = mapOutputStatistics.flatMap(_.map(_.bytesByPartitionId.sum)).sum
+
+    // targetSize ： 每个分区的目标输入数据量
     val maxTargetSize = math.ceil(totalPostShuffleInputSize / minNumPartitions.toDouble).toLong
-    // It's meaningless to make target size smaller than minPartitionSize.
     val targetSize = maxTargetSize.min(advisoryTargetSize).max(minPartitionSize)
 
+    // 获取每个任务的 shuffleId
     val shuffleIds = mapOutputStatistics.flatMap(_.map(_.shuffleId)).mkString(", ")
+
     logInfo(s"For shuffle($shuffleIds), advisory target size: $advisoryTargetSize, " +
       s"actual target size $targetSize, minimum partition size: $minPartitionSize")
 
-    // If `inputPartitionSpecs` are all empty, it means skew join optimization is not applied.
+    // “如果 inputPartitionSpecs 都为空，则表示没有应用倾斜连接优化。”
     if (inputPartitionSpecs.forall(_.isEmpty)) {
-      coalescePartitionsWithoutSkew(
-        mapOutputStatistics, targetSize, minPartitionSize)
+      coalescePartitionsWithoutSkew(mapOutputStatistics, targetSize, minPartitionSize)
     } else {
-      coalescePartitionsWithSkew(
-        mapOutputStatistics, inputPartitionSpecs, targetSize, minPartitionSize)
+      coalescePartitionsWithSkew(mapOutputStatistics, inputPartitionSpecs, targetSize, minPartitionSize)
     }
   }
 
@@ -78,10 +75,14 @@ object ShufflePartitionsUtil extends Logging {
       mapOutputStatistics: Seq[Option[MapOutputStatistics]],
       targetSize: Long,
       minPartitionSize: Long): Seq[Seq[ShufflePartitionSpec]] = {
-    // `ShuffleQueryStageExec#mapStats` returns None when the input RDD has 0 partitions,
-    // we should skip it when calculating the `partitionStartIndices`.
+
+    // 当输入 RDD 有 0 个分区时，`ShuffleQueryStageExec#mapStats` 返回 None，
+    // 计算 `partitionStartIndices` 时应跳过它。
     val validMetrics = mapOutputStatistics.flatten
+
+    // 获取shuffle 数据量
     val numShuffles = mapOutputStatistics.length
+
     // If all input RDDs have 0 partition, we create an empty partition for every shuffle read.
     if (validMetrics.isEmpty) {
       return Seq.fill(numShuffles)(Seq(CoalescedPartitionSpec(0, 0, 0)))
@@ -94,9 +95,12 @@ object ShufflePartitionsUtil extends Logging {
       return Seq.empty
     }
 
+    // 获取当前的分区数量
     val numPartitions = validMetrics.head.bytesByPartitionId.length
-    val newPartitionSpecs = coalescePartitions(
-      0, numPartitions, validMetrics, targetSize, minPartitionSize)
+
+    // 合并目标分区
+    val newPartitionSpecs = coalescePartitions(0, numPartitions, validMetrics, targetSize, minPartitionSize)
+
     if (newPartitionSpecs.length < numPartitions) {
       attachDataSize(mapOutputStatistics, newPartitionSpecs)
     } else {
@@ -197,30 +201,27 @@ object ShufflePartitionsUtil extends Logging {
   }
 
   /**
-   * Coalesce the partitions of [start, end) from multiple shuffles. This method assumes that all
-   * the shuffles have the same number of partitions, and the partitions of same index will be read
-   * together by one task.
+   * 合并多个 shuffle 的 [start, end) 分区。该方法假设所有 shuffle 都具有相同数量的分区，
+   * 并且同一索引的分区将由一个任务一起读取。
    *
-   * The strategy used to determine the number of coalesced partitions is described as follows.
-   * To determine the number of coalesced partitions, we have a target size for a coalesced
-   * partition. Once we have size statistics of all shuffle partitions, we will do
-   * a pass of those statistics and pack shuffle partitions with continuous indices to a single
-   * coalesced partition until adding another shuffle partition would cause the size of a
-   * coalesced partition to be greater than the target size.
+   * 用于确定合并分区数量的策略如下所述。为了确定合并分区的数量，我们设定了一个合并分区的目标大小。
+   * 一旦我们获得了所有 shuffle 分区的大小统计信息，我们将对这些统计信息进行遍历，
+   * 并将连续索引的 shuffle 分区打包到一个合并分区中，直到添加另一个 shuffle 分区会导致合并分区的大小
+   * 大于目标大小。
    *
-   * For example, we have two shuffles with the following partition size statistics:
-   *  - shuffle 1 (5 partitions): [100 MiB, 20 MiB, 100 MiB, 10MiB, 30 MiB]
-   *  - shuffle 2 (5 partitions): [10 MiB,  10 MiB, 70 MiB,  5 MiB, 5 MiB]
-   * Assuming the target size is 128 MiB, we will have 4 coalesced partitions, which are:
-   *  - coalesced partition 0: shuffle partition 0 (size 110 MiB)
-   *  - coalesced partition 1: shuffle partition 1 (size 30 MiB)
-   *  - coalesced partition 2: shuffle partition 2 (size 170 MiB)
-   *  - coalesced partition 3: shuffle partition 3 and 4 (size 50 MiB)
+   * 例如，我们有两个 shuffle，具有以下分区大小统计信息：
+   *  - shuffle 1 (5 个分区): [100 MiB, 20 MiB, 100 MiB, 10 MiB, 30 MiB]
+   *  - shuffle 2 (5 个分区): [10 MiB, 10 MiB, 70 MiB, 5 MiB, 5 MiB]
+   * 假设目标大小为 128 MiB，我们将有 4 个合并分区，分别是：
+   *  - 合并分区 0：shuffle 分区 0 (大小 110 MiB)
+   *  - 合并分区 1：shuffle 分区 1 (大小 30 MiB)
+   *  - 合并分区 2：shuffle 分区 2 (大小 170 MiB)
+   *  - 合并分区 3：shuffle 分区 3 和 4 (大小 50 MiB)
    *
-   *  @return A sequence of [[CoalescedPartitionSpec]]s. For example, if partitions [0, 1, 2, 3, 4]
-   *          split at indices [0, 2, 3], the returned partition specs will be:
-   *          CoalescedPartitionSpec(0, 2), CoalescedPartitionSpec(2, 3) and
-   *          CoalescedPartitionSpec(3, 5).
+   * @return [[CoalescedPartitionSpec]] 的序列。例如，如果分区 [0, 1, 2, 3, 4]
+   *          在索引 [0, 2, 3] 处分割，返回的分区规格将是：
+   *          CoalescedPartitionSpec(0, 2), CoalescedPartitionSpec(2, 3) 和
+   *          CoalescedPartitionSpec(3, 5)。
    */
   private def coalescePartitions(
       start: Int,

@@ -70,46 +70,53 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
       conf.getConf(SQLConf.COALESCE_PARTITIONS_MIN_PARTITION_SIZE)
     }
 
-    // Sub-plans under the Union operator can be coalesced independently, so we can divide them
-    // into independent "coalesce groups", and all shuffle stages within each group have to be
-    // coalesced together.
+    // Union 操作符下的子计划可以独立合并，因此我们可以将它们划分为独立的“合并组”，
+    // 每个组中的所有 shuffle 阶段必须一起合并。
     // 收集整理要合并的分区
     val coalesceGroups = collectCoalesceGroups(plan)
 
-    // Divide minimum task parallelism among coalesce groups according to their data sizes.
+    // 根据数据大小在合并组之间分配最小任务并行度。
     val minNumPartitionsByGroup = if (coalesceGroups.length == 1) {
       Seq(math.max(minNumPartitions, 1))
     } else {
-      val sizes =
-        coalesceGroups.map(_.flatMap(_.shuffleStage.mapStats.map(_.bytesByPartitionId.sum)).sum)
-      val totalSize = sizes.sum
-      sizes.map { size =>
-        val num = if (totalSize > 0) {
-          math.round(minNumPartitions * 1.0 * size / totalSize)
-        } else {
-          minNumPartitions
-        }
-        math.max(num.toInt, 1)
+
+      // 计算得到每个合并的算子的数据量
+      val sizes = coalesceGroups.map(_.flatMap(_.shuffleStage.mapStats.map(_.bytesByPartitionId.sum)).sum)
+
+      val totalSize = sizes.sum  // 计算出总的大小
+
+      // 计算每个组的分区
+      sizes.map {
+        size =>
+          val num = if (totalSize > 0) {
+            math.round(minNumPartitions * 1.0 * size / totalSize)
+          } else {
+            minNumPartitions
+          }
+          math.max(num.toInt, 1)
       }
     }
 
     // 计算每个 shuffle stage 的合并 shuffle 算子树
     val specsMap = mutable.HashMap.empty[Int, Seq[ShufflePartitionSpec]]
-    // Coalesce partitions for each coalesce group independently.
-    coalesceGroups.zip(minNumPartitionsByGroup).foreach { case (shuffleStages, minNumPartitions) =>
-      val newPartitionSpecs = ShufflePartitionsUtil.coalescePartitions(
-        shuffleStages.map(_.shuffleStage.mapStats),
-        shuffleStages.map(_.partitionSpecs),
-        advisoryTargetSize = advisoryTargetSize,
-        minNumPartitions = minNumPartitions,
-        minPartitionSize = minPartitionSize)
 
-      if (newPartitionSpecs.nonEmpty) {
-        shuffleStages.zip(newPartitionSpecs).map { case (stageInfo, partSpecs) =>
-          specsMap.put(stageInfo.shuffleStage.id, partSpecs)
+    // Coalesce partitions for each coalesce group independently.
+    coalesceGroups.zip(minNumPartitionsByGroup)
+      .foreach {
+        case (shuffleStages, minNumPartitions) =>  // 每个组与每个组的最小分区数
+          val newPartitionSpecs = ShufflePartitionsUtil.coalescePartitions(
+          shuffleStages.map(_.shuffleStage.mapStats),    // 输入分区信息
+          shuffleStages.map(_.partitionSpecs),           // stage 的分区描述信息
+          advisoryTargetSize = advisoryTargetSize,       // 动态分区目标数据大小
+          minNumPartitions = minNumPartitions,           // 最小分区量
+          minPartitionSize = minPartitionSize)           // 最低分区值
+
+        if (newPartitionSpecs.nonEmpty) {
+          shuffleStages.zip(newPartitionSpecs).map { case (stageInfo, partSpecs) =>
+            specsMap.put(stageInfo.shuffleStage.id, partSpecs)
+          }
         }
       }
-    }
 
     if (specsMap.nonEmpty) {
       updateShuffleReads(plan, specsMap.toMap)
@@ -124,8 +131,7 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
    * - 所有这些洗牌阶段都支持合并。
    */
   private def collectCoalesceGroups(plan: SparkPlan): Seq[Seq[ShuffleStageInfo]] = plan match {
-    case r @ AQEShuffleReadExec(q: ShuffleQueryStageExec, _) if isSupported(q.shuffle) =>
-      Seq(collectShuffleStageInfos(r))
+    case r @ AQEShuffleReadExec(q: ShuffleQueryStageExec, _) if isSupported(q.shuffle) => Seq(collectShuffleStageInfos(r))
     case unary: UnaryExecNode => collectCoalesceGroups(unary.child)
     case union: UnionExec => union.children.flatMap(collectCoalesceGroups)
     // 如果并非所有叶节点都是查询阶段，那么减少洗牌分区数量可能会破坏 Spark 计划中子操作符之间关于输出分区数量的假设，导致任务执行失败。

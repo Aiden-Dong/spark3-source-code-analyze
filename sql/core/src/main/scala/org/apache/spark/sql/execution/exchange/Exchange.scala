@@ -40,9 +40,9 @@ abstract class Exchange extends UnaryExecNode {
 }
 
 /**
- * A wrapper for reused exchange to have different output, because two exchanges which produce
- * logically identical output will have distinct sets of output attribute ids, so we need to
- * preserve the original ids because they're what downstream operators are expecting.
+ * 一个包装复用交换的封装器，以拥有不同的输出，
+ * 因为产生逻辑上相同输出的两个交换将具有不同的输出属性 ID 集，
+ * 所以我们需要保留原始 ID，因为下游操作符期望这些 ID。
  */
 case class ReusedExchangeExec(override val output: Seq[Attribute], child: Exchange)
   extends LeafExecNode {
