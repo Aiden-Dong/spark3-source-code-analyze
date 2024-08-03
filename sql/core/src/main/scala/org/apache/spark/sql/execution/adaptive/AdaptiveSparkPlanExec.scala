@@ -456,14 +456,12 @@ case class AdaptiveSparkPlanExec(
   }
 
   /**
-   * This method is called recursively to traverse the plan tree bottom-up and create a new query
-   * stage or try reusing an existing stage if the current node is an [[Exchange]] node and all of
-   * its child stages have been materialized.
+   * 该方法递归调用以自下而上地遍历计划树，并创建新查询阶段，或者在当前节点是 [[Exchange]] 节点且其所有子阶段都已物化时尝试重用现有阶段。
    *
-   * With each call, it returns:
-   * 1) The new plan replaced with [[QueryStageExec]] nodes where new stages are created.
-   * 2) Whether the child query stages (if any) of the current node have all been materialized.
-   * 3) A list of the new query stages that have been created.
+   * 每次调用时，它返回：
+   * 1) 替换为 [[QueryStageExec]] 节点的新计划，其中创建了新阶段。
+   * 2) 当前节点的子查询阶段（如果有）是否都已物化。
+   * 3) 创建的新查询阶段列表。
    */
   private def createQueryStages(plan: SparkPlan): CreateStageResult = plan match {
     case e: Exchange =>
