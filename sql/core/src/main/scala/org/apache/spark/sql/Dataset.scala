@@ -87,6 +87,7 @@ private[sql] object Dataset {
 
   def ofRows(sparkSession: SparkSession, logicalPlan: LogicalPlan): DataFrame =
     sparkSession.withActive {
+      // 构造一个 QueryExecution SQL执行对象
       val qe = sparkSession.sessionState.executePlan(logicalPlan)
       qe.assertAnalyzed()
       new Dataset[Row](qe, RowEncoder(qe.analyzed.schema))
@@ -95,8 +96,10 @@ private[sql] object Dataset {
   /** A variant of ofRows that allows passing in a tracker so we can track query parsing time. */
   def ofRows(sparkSession: SparkSession, logicalPlan: LogicalPlan, tracker: QueryPlanningTracker)
     : DataFrame = sparkSession.withActive {
+    // 构造一个 QueryExecution SQL执行对象
     val qe = new QueryExecution(sparkSession, logicalPlan, tracker)
-    qe.assertAnalyzed()
+    qe.assertAnalyzed()          // 分析逻辑树
+
     new Dataset[Row](qe, RowEncoder(qe.analyzed.schema))
   }
 }
@@ -189,8 +192,8 @@ private[sql] object Dataset {
  */
 @Stable
 class Dataset[T] private[sql](
-    @DeveloperApi @Unstable @transient val queryExecution: QueryExecution,
-    @DeveloperApi @Unstable @transient val encoder: Encoder[T])
+    @DeveloperApi @Unstable @transient val queryExecution: QueryExecution,   // 执行管理树
+    @DeveloperApi @Unstable @transient val encoder: Encoder[T])              //  schema 序列化类
   extends Serializable {
 
   @transient lazy val sparkSession: SparkSession = {
@@ -203,6 +206,7 @@ class Dataset[T] private[sql](
   // A globally unique id of this Dataset.
   private val id = Dataset.curId.getAndIncrement()
 
+  // 逻辑树诊断
   queryExecution.assertAnalyzed()
 
   // Note for Spark contributors: if adding or updating any action in `Dataset`, please make sure
@@ -227,15 +231,12 @@ class Dataset[T] private[sql](
   }
 
   /**
-   * Currently [[ExpressionEncoder]] is the only implementation of [[Encoder]], here we turn the
-   * passed in encoder to [[ExpressionEncoder]] explicitly, and mark it implicit so that we can use
-   * it when constructing new Dataset objects that have the same object type (that will be
-   * possibly resolved to a different schema).
+   * 目前 [[ExpressionEncoder]] 是 [[Encoder]] 的唯一实现，在这里我们将传入的编码器显式转换为 [[ExpressionEncoder]]，
+   * 并将其标记为隐式，这样我们可以在构造具有相同对象类型（可能会解析为不同模式）的新 Dataset 对象时使用它。
    */
   private[sql] implicit val exprEnc: ExpressionEncoder[T] = encoderFor(encoder)
 
-  // The resolved `ExpressionEncoder` which can be used to turn rows to objects of type T, after
-  // collecting rows to the driver side.
+  // 解析后的 `ExpressionEncoder`，可以在将行收集到驱动端后将其转换为类型为 T 的对象。
   private lazy val resolvedEnc = {
     exprEnc.resolveAndBind(logicalPlan.output, sparkSession.sessionState.analyzer)
   }

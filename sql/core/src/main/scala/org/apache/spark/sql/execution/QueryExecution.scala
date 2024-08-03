@@ -90,6 +90,9 @@ class QueryExecution(
     case _ => "command"
   }
 
+  /*****
+   * 提前执行命令，或者是立刻执行命令
+   */
   private def eagerlyExecuteCommands(p: LogicalPlan) = p transformDown {
     case c: Command =>
       val qe = sparkSession.sessionState.executePlan(c, CommandExecutionMode.NON_ROOT)
@@ -107,8 +110,7 @@ class QueryExecution(
   lazy val withCachedData: LogicalPlan = sparkSession.withActive {
     assertAnalyzed()
     assertSupported()
-    // clone the plan to avoid sharing the plan instance between different stages like analyzing,
-    // optimizing and planning.
+    // 克隆计划，以避免在分析、优化和规划等不同阶段之间共享计划实例。
     sparkSession.sharedState.cacheManager.useCachedData(commandExecuted.clone())
   }
 
@@ -119,10 +121,8 @@ class QueryExecution(
     // the optimizing phase
     assertCommandExecuted()
     executePhase(QueryPlanningTracker.OPTIMIZATION) {
-      // clone the plan to avoid sharing the plan instance between different stages like analyzing,
-      // optimizing and planning.
-      val plan =
-        sparkSession.sessionState.optimizer.executeAndTrack(withCachedData.clone(), tracker)
+      // 克隆计划，以避免在不同阶段（如分析、优化和规划）之间共享计划实例。
+      val plan =  sparkSession.sessionState.optimizer.executeAndTrack(withCachedData.clone(), tracker)
       // We do not want optimized plans to be re-analyzed as literals that have been constant
       // folded and such can cause issues during analysis. While `clone` should maintain the
       // `analyzed` state of the LogicalPlan, we set the plan as analyzed here as well out of
