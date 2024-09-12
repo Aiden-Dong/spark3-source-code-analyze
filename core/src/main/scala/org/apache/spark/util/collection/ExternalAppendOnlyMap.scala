@@ -36,20 +36,17 @@ import org.apache.spark.util.CompletionIterator
 import org.apache.spark.util.collection.ExternalAppendOnlyMap.HashComparator
 
 /**
- * :: DeveloperApi ::
- * An append-only map that spills sorted content to disk when there is insufficient space for it
- * to grow.
+ * :: 开发者 API ::
+ * 一个仅追加的映射，当没有足够的空间增长时，将排序后的内容溢出到磁盘。
  *
- * This map takes two passes over the data:
+ * 该映射对数据进行两次处理：
  *
- *   (1) Values are merged into combiners, which are sorted and spilled to disk as necessary
- *   (2) Combiners are read from disk and merged together
+ * (1) 将值合并到组合器中，并根据需要对其进行排序并溢出到磁盘
+ * (2) 从磁盘读取组合器并将它们合并在一起
  *
- * The setting of the spill threshold faces the following trade-off: If the spill threshold is
- * too high, the in-memory map may occupy more memory than is available, resulting in OOM.
- * However, if the spill threshold is too low, we spill frequently and incur unnecessary disk
- * writes. This may lead to a performance regression compared to the normal case of using the
- * non-spilling AppendOnlyMap.
+ * 溢出阈值的设置存在以下权衡：如果溢出阈值过高，内存中的映射可能会占用超过可用的内存，
+ * 导致内存溢出（OOM）。然而，如果溢出阈值过低，我们会频繁地溢出，并产生不必要的磁盘写入。
+ * 这可能会导致与使用不溢出的 AppendOnlyMap 的正常情况相比的性能下降。
  */
 @DeveloperApi
 class ExternalAppendOnlyMap[K, V, C](

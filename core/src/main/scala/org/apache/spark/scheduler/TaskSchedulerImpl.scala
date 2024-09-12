@@ -395,7 +395,8 @@ private[spark] class TaskSchedulerImpl(
         val taskResAssignmentsOpt = resourcesMeetTaskRequirements(taskSet, availableCpus(i), availableResources(i))
 
 
-        taskResAssignmentsOpt.foreach { taskResAssignments =>
+        taskResAssignmentsOpt.foreach {
+          taskResAssignments =>
 
           try {
             val prof = sc.resourceProfileManager.resourceProfileFromId(taskSetRpID)

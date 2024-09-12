@@ -51,8 +51,8 @@ import org.apache.spark.util.collection.MedianHeap
  */
 private[spark] class TaskSetManager(
     sched: TaskSchedulerImpl,
-    val taskSet: TaskSet,    // 当前处于调度Stage的Task集合
-    val maxTaskFailures: Int,
+    val taskSet: TaskSet,        // 当前处于调度Stage的Task集合
+    val maxTaskFailures: Int,    // Task 的最大失败次数
     healthTracker: Option[HealthTracker] = None,
     clock: Clock = new SystemClock()) extends Schedulable with Logging {
 
@@ -157,12 +157,11 @@ private[spark] class TaskSetManager(
     successful(taskInfos(tid).index)
   }
 
-  // True once no more tasks should be launched for this task set manager. TaskSetManagers enter
-  // the zombie state once at least one attempt of each task has completed successfully, or if the
-  // task set is aborted (for example, because it was killed).  TaskSetManagers remain in the zombie
-  // state until all tasks have finished running; we keep TaskSetManagers that are in the zombie
-  // state in order to continue to track and account for the running tasks.
-  // TODO: We should kill any running task attempts when the task set manager becomes a zombie.
+  // 一旦不应再为此任务集管理器启动更多任务时，该值为 true。
+  // TaskSetManagers 一旦每个任务的至少一次尝试成功完成，或任务集被中止（例如被终止），便进入 zombie 状态。
+  // TaskSetManagers 将保持在 zombie 状态，直到所有任务结束运行；
+  // 我们保留处于 zombie 状态的 TaskSetManagers，以便继续跟踪和计算正在运行的任务。
+  // TODO: 当任务集管理器进入 zombie 状态时，我们应该终止所有正在运行的任务尝试。
   private[scheduler] var isZombie = false
 
   // Whether the taskSet run tasks from a barrier stage. Spark must launch all the tasks at the
@@ -180,32 +179,29 @@ private[spark] class TaskSetManager(
   // Store tasks waiting to be scheduled by locality preferences
   private[scheduler] val pendingTasks = new PendingTasksByLocality()
 
-  // Tasks that can be speculated. Since these will be a small fraction of total
-  // tasks, we'll just hold them in a HashSet. The HashSet here ensures that we do not add
-  // duplicate speculatable tasks.
+
+  // 推测执行任务集合
   private[scheduler] val speculatableTasks = new HashSet[Int]
 
-  // Store speculatable tasks by locality preferences
+  // 等待推测执行任务
   private[scheduler] val pendingSpeculatableTasks = new PendingTasksByLocality()
 
   // Task index, start and finish time for each task attempt (indexed by task ID)
   private[scheduler] val taskInfos = new HashMap[Long, TaskInfo]
 
-  // Use a MedianHeap to record durations of successful tasks so we know when to launch
-  // speculative tasks. This is only used when speculation is enabled, to avoid the overhead
-  // of inserting into the heap when the heap won't be used.
+  // 使用 MedianHeap 来记录成功任务的持续时间，这样我们就知道何时启动推测性任务。
+  // 只有在启用推测时才使用此功能，以避免在堆不会被使用的情况下插入元素所带来的开销。
   val successfulTaskDurations = new MedianHeap()
 
   // How frequently to reprint duplicate exceptions in full, in milliseconds
-  val EXCEPTION_PRINT_INTERVAL =
-    conf.getLong("spark.logging.exceptionPrintInterval", 10000)
+  val EXCEPTION_PRINT_INTERVAL = conf.getLong("spark.logging.exceptionPrintInterval", 10000)
 
   // Map of recent exceptions (identified by string representation and top stack frame) to
   // duplicate count (how many times the same exception has appeared) and time the full exception
   // was printed. This should ideally be an LRU map that can drop old exceptions automatically.
   private val recentExceptions = HashMap[String, (Int, Long)]()
 
-  // Figure out the current map output tracker epoch and set it on all tasks
+  // 确定当前的映射输出跟踪器的 epoch，并将其设置到所有任务上。
   val epoch = sched.mapOutputTracker.getEpoch
   logDebug("Epoch for " + taskSet + ": " + epoch)
   for (t <- tasks) {
@@ -258,7 +254,7 @@ private[spark] class TaskSetManager(
 
   private[scheduler] var emittedTaskSizeWarning = false
 
-  /** Add a task to all the pending-task lists that it should be on. */
+  /** 利用数据本地性计算所在节点所在位置 */
   private[spark] def addPendingTask(
       index: Int,
       resolveRacks: Boolean = true,
@@ -266,7 +262,9 @@ private[spark] class TaskSetManager(
     // A zombie TaskSetManager may reach here while handling failed task.
     if (isZombie) return
     val pendingTaskSetToAddTo = if (speculatable) pendingSpeculatableTasks else pendingTasks
+    // 获取数据本地性
     for (loc <- tasks(index).preferredLocations) {
+      // 进程本地性计算
       loc match {
         case e: ExecutorCacheTaskLocation =>
           pendingTaskSetToAddTo.forExecutor.getOrElseUpdate(e.executorId, new ArrayBuffer) += index
@@ -284,8 +282,11 @@ private[spark] class TaskSetManager(
           }
         case _ =>
       }
+
+      // 节点本地性计算
       pendingTaskSetToAddTo.forHost.getOrElseUpdate(loc.host, new ArrayBuffer) += index
 
+      // 机架本地性计算
       if (resolveRacks) {
         sched.getRackForHost(loc.host).foreach { rack =>
           pendingTaskSetToAddTo.forRack.getOrElseUpdate(rack, new ArrayBuffer) += index
@@ -1085,8 +1086,7 @@ private[spark] class TaskSetManager(
   }
 
   /**
-   * Check if the task associated with the given tid has past the time threshold and should be
-   * speculative run.
+   * 检查与给定 tid 关联的任务是否已超过时间阈值，并且是否应该进行推测性运行。
    */
   private def checkAndSubmitSpeculatableTask(
       tid: Long,
@@ -1094,6 +1094,9 @@ private[spark] class TaskSetManager(
       threshold: Double): Boolean = {
     val info = taskInfos(tid)
     val index = info.index
+
+    // 当前任务正在运行
+    // 当前任务的运行时间超过了已完成任务平均时间的 threshold 倍
     if (!successful(index) && copiesRunning(index) == 1 &&
         info.timeRunning(currentTimeMillis) > threshold && !speculatableTasks.contains(index)) {
       addPendingTask(index, speculatable = true)

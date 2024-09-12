@@ -23,28 +23,16 @@ import org.apache.spark.internal.config.Tests._
 import org.apache.spark.storage.BlockId
 
 /**
- * A [[MemoryManager]] that enforces a soft boundary between execution and storage such that
- * either side can borrow memory from the other.
+ * 一种[[MemoryManager]]，它在执行（execution）和存储（storage）之间强制执行一个软边界，使得两者可以互相借用内存。
+ * 执行和存储共享的区域是（总堆内存空间 - 300MB）的一个分数，通过spark.memory.fraction（默认值为0.6）配置。
+ *   该边界在此空间内的位置由spark.memory.storageFraction（默认值为0.5）进一步确定。
+ *   这意味着存储区域的大小默认是堆空间的0.6 * 0.5 = 0.3。
+ * 存储可以借用尽可能多的可用执行内存，直到执行重新占用其空间。此时，缓存的块将从内存中逐出，直到释放出足够的借用内存来满足执行的内存请求。
+ * 类似地，执行可以借用尽可能多的可用存储内存。然而，由于实现上的复杂性，执行内存从不被存储逐出。
+ * 这意味着，如果执行已经占用了大部分存储空间，那么缓存块的尝试可能会失败，在这种情况下，新块将根据其各自的存储级别立即被逐出。
  *
- * The region shared between execution and storage is a fraction of (the total heap space - 300MB)
- * configurable through `spark.memory.fraction` (default 0.6). The position of the boundary
- * within this space is further determined by `spark.memory.storageFraction` (default 0.5).
- * This means the size of the storage region is 0.6 * 0.5 = 0.3 of the heap space by default.
- *
- * Storage can borrow as much execution memory as is free until execution reclaims its space.
- * When this happens, cached blocks will be evicted from memory until sufficient borrowed
- * memory is released to satisfy the execution memory request.
- *
- * Similarly, execution can borrow as much storage memory as is free. However, execution
- * memory is *never* evicted by storage due to the complexities involved in implementing this.
- * The implication is that attempts to cache blocks may fail if execution has already eaten
- * up most of the storage space, in which case the new blocks will be evicted immediately
- * according to their respective storage levels.
- *
- * @param onHeapStorageRegionSize Size of the storage region, in bytes.
- *                          This region is not statically reserved; execution can borrow from
- *                          it if necessary. Cached blocks can be evicted only if actual
- *                          storage memory usage exceeds this region.
+ * @param onHeapStorageRegionSize 存储区域的大小，以字节为单位。
+ *                                该区域不是静态保留的；如果需要，执行可以从中借用内存。只有实际的存储内存使用量超过该区域时，缓存块才会被逐出。
  */
 private[spark] class UnifiedMemoryManager(
     conf: SparkConf,

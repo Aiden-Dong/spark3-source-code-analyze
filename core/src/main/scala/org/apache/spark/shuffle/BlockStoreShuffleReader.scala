@@ -115,9 +115,8 @@ private[spark] class BlockStoreShuffleReader[K, C](
         val combinedKeyValuesIterator = interruptibleIter.asInstanceOf[Iterator[(K, C)]]
         dep.aggregator.get.combineCombinersByKey(combinedKeyValuesIterator, context)
       } else {
-        // We don't know the value type, but also don't care -- the dependency *should*
-        // have made sure its compatible w/ this aggregator, which will convert the value
-        // type to the combined type C
+        // 我们不知道值的类型，但也不在乎 —— 依赖项 *应该* 确保它与此聚合器兼容，
+        // 该聚合器将把值类型转换为组合类型 C。
         val keyValuesIterator = interruptibleIter.asInstanceOf[Iterator[(K, Nothing)]]
         dep.aggregator.get.combineValuesByKey(keyValuesIterator, context)
       }
@@ -129,8 +128,7 @@ private[spark] class BlockStoreShuffleReader[K, C](
     val resultIter: Iterator[Product2[K, C]] = dep.keyOrdering match {
       case Some(keyOrd: Ordering[K]) =>
         // Create an ExternalSorter to sort the data.
-        val sorter =
-          new ExternalSorter[K, C, C](context, ordering = Some(keyOrd), serializer = dep.serializer)
+        val sorter = new ExternalSorter[K, C, C](context, ordering = Some(keyOrd), serializer = dep.serializer)
         sorter.insertAllAndUpdateMetrics(aggregatedIter)
       case None =>
         aggregatedIter

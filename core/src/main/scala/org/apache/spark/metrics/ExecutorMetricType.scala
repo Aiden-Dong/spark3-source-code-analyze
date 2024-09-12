@@ -74,7 +74,7 @@ case object JVMHeapMemory extends SingleValueExecutorMetricType {
   }
 }
 
-case object JVMOffHeapMemory extends SingleValueExecutorMetricType {
+case object yoJVMOffHeapMemory extends SingleValueExecutorMetricType {
   override private[spark] def getMetricValue(memoryManager: MemoryManager): Long = {
     ManagementFactory.getMemoryMXBean.getNonHeapMemoryUsage().getUsed()
   }

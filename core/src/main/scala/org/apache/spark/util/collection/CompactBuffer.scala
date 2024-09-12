@@ -22,12 +22,10 @@ import scala.reflect.ClassTag
 import org.apache.spark.unsafe.array.ByteArrayMethods
 
 /**
- * An append-only buffer similar to ArrayBuffer, but more memory-efficient for small buffers.
- * ArrayBuffer always allocates an Object array to store the data, with 16 entries by default,
- * so it has about 80-100 bytes of overhead. In contrast, CompactBuffer can keep up to two
- * elements in fields of the main object, and only allocates an Array[AnyRef] if there are more
- * entries than that. This makes it more efficient for operations like groupBy where we expect
- * some keys to have very few elements.
+ * 一个类似于 ArrayBuffer 的追加缓冲区，但对于小缓冲区更节省内存。
+ * ArrayBuffer 总是分配一个 Object 数组来存储数据，默认有 16 个条目，因此它有大约 80-100 字节的开销。
+ * 相比之下，CompactBuffer 可以在主对象的字段中最多保留两个元素，只有在条目数超过两个时才会分配 Array[AnyRef]。
+ * 这使得它在像 groupBy 这样的操作中更加高效，因为我们预计某些键只有很少的元素。
  */
 private[spark] class CompactBuffer[T: ClassTag] extends Seq[T] with Serializable {
   // First two elements

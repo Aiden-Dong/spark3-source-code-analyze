@@ -358,19 +358,17 @@ package object config {
     .createOptional
 
   private[spark] val MEMORY_OFFHEAP_ENABLED = ConfigBuilder("spark.memory.offHeap.enabled")
-    .doc("If true, Spark will attempt to use off-heap memory for certain operations. " +
-      "If off-heap memory use is enabled, then spark.memory.offHeap.size must be positive.")
+    .doc("如果为 true，Spark 将尝试在某些操作中使用堆外（off-heap）内存。" +
+        "如果启用了堆外内存使用，则 spark.memory.offHeap.size 必须为正数。")
     .version("1.6.0")
     .withAlternative("spark.unsafe.offHeap")
     .booleanConf
     .createWithDefault(false)
 
   private[spark] val MEMORY_OFFHEAP_SIZE = ConfigBuilder("spark.memory.offHeap.size")
-    .doc("The absolute amount of memory which can be used for off-heap allocation, " +
-      " in bytes unless otherwise specified. " +
-      "This setting has no impact on heap memory usage, so if your executors' total memory " +
-      "consumption must fit within some hard limit then be sure to shrink your JVM heap size " +
-      "accordingly. This must be set to a positive value when spark.memory.offHeap.enabled=true.")
+    .doc("可用于堆外（off-heap）分配的绝对内存量，单位为字节（除非另有说明）。" +
+      "此设置对堆内存的使用没有影响，因此如果执行程序（executor）的总内存消耗必须符合某个硬限制，则请确保相应地减少JVM堆的大小。" +
+      "当 spark.memory.offHeap.enabled=true 时，这个值必须设置为正数.")
     .version("1.6.0")
     .bytesConf(ByteUnit.BYTE)
     .checkValue(_ >= 0, "The off-heap memory size must not be negative")

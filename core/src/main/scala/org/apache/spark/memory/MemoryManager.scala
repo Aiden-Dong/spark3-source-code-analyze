@@ -33,11 +33,9 @@ import org.apache.spark.unsafe.memory.MemoryAllocator
 import org.apache.spark.util.Utils
 
 /**
- * An abstract memory manager that enforces how memory is shared between execution and storage.
- *
- * In this context, execution memory refers to that used for computation in shuffles, joins,
- * sorts and aggregations, while storage memory refers to that used for caching and propagating
- * internal data across the cluster. There exists one MemoryManager per JVM.
+ * 一个抽象的内存管理器，用于管理执行内存和存储内存之间的共享方式。
+ * 在此上下文中，执行内存是指用于洗牌（shuffles）、连接（joins）、排序（sorts）和聚合（aggregations）计算的内存，而存储内存是指用于缓存和在集群内传播内部数据的内存。
+ * 每个JVM（Java虚拟机）中存在一个MemoryManager。
  */
 private[spark] abstract class MemoryManager(
     conf: SparkConf,
@@ -47,7 +45,7 @@ private[spark] abstract class MemoryManager(
 
   require(onHeapExecutionMemory > 0, "onHeapExecutionMemory must be > 0")
 
-  // -- Methods related to memory allocation policies and bookkeeping ------------------------------
+  // -- 与内存分配策略和记录管理相关的方法 ------------------------------
 
   @GuardedBy("this")
   protected val onHeapStorageMemoryPool = new StorageMemoryPool(this, MemoryMode.ON_HEAP)
@@ -61,9 +59,8 @@ private[spark] abstract class MemoryManager(
   onHeapStorageMemoryPool.incrementPoolSize(onHeapStorageMemory)
   onHeapExecutionMemoryPool.incrementPoolSize(onHeapExecutionMemory)
 
-  protected[this] val maxOffHeapMemory = conf.get(MEMORY_OFFHEAP_SIZE)
-  protected[this] val offHeapStorageMemory =
-    (maxOffHeapMemory * conf.get(MEMORY_STORAGE_FRACTION)).toLong
+  protected[this] val maxOffHeapMemory = conf.get(MEMORY_OFFHEAP_SIZE)  // spark.memory.offHeap.size
+  protected[this] val offHeapStorageMemory = (maxOffHeapMemory * conf.get(MEMORY_STORAGE_FRACTION)).toLong
 
   offHeapExecutionMemoryPool.incrementPoolSize(maxOffHeapMemory - offHeapStorageMemory)
   offHeapStorageMemoryPool.incrementPoolSize(offHeapStorageMemory)
