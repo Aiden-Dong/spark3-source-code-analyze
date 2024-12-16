@@ -97,7 +97,7 @@ class HiveSessionStateBuilder(
     override val postHocResolutionRules: Seq[Rule[LogicalPlan]] =
       DetectAmbiguousSelfJoin +:
         new DetermineTableStats(session) +:
-        RelationConversions(catalog) +:
+        RelationConversions(catalog) +:         // Relation 操作的高级用法， 将 HiveTableRelation 符合条件的转换为 LogicalRelation
         PreprocessTableCreation(session) +:
         PreprocessTableInsertion +:
         DataSourceAnalysis +:

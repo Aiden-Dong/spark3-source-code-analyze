@@ -1309,9 +1309,8 @@ package object config {
 
   private[spark] val SHUFFLE_FILE_BUFFER_SIZE =
     ConfigBuilder("spark.shuffle.file.buffer")
-      .doc("Size of the in-memory buffer for each shuffle file output stream, in KiB unless " +
-        "otherwise specified. These buffers reduce the number of disk seeks and system calls " +
-        "made in creating intermediate shuffle files.")
+      .doc("每个shuffle文件输出流的内存缓冲区大小，单位为KiB，除非另有规定。" +
+        "这些缓冲区减少了磁盘查找和系统调用的次数用于创建中间shuffle文件.")
       .version("1.4.0")
       .bytesConf(ByteUnit.KiB)
       .checkValue(v => v > 0 && v <= ByteArrayMethods.MAX_ROUNDED_ARRAY_LENGTH / 1024,

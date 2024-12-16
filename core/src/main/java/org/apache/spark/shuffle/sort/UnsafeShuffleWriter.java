@@ -118,12 +118,13 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       ShuffleWriteMetricsReporter writeMetrics,
       ShuffleExecutorComponents shuffleExecutorComponents) throws SparkException {
     final int numPartitions = handle.dependency().partitioner().numPartitions();
+
     if (numPartitions > SortShuffleManager.MAX_SHUFFLE_OUTPUT_PARTITIONS_FOR_SERIALIZED_MODE()) {
-      throw new IllegalArgumentException(
-        "UnsafeShuffleWriter can only be used for shuffles with at most " +
+      throw new IllegalArgumentException("UnsafeShuffleWriter can only be used for shuffles with at most " +
         SortShuffleManager.MAX_SHUFFLE_OUTPUT_PARTITIONS_FOR_SERIALIZED_MODE() +
         " reduce partitions");
     }
+
     this.blockManager = blockManager;
     this.memoryManager = memoryManager;
     this.mapId = mapId;
@@ -136,10 +137,8 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     this.taskContext = taskContext;
     this.sparkConf = sparkConf;
     this.transferToEnabled = sparkConf.getBoolean("spark.file.transferTo", true);
-    this.initialSortBufferSize =
-      (int) (long) sparkConf.get(package$.MODULE$.SHUFFLE_SORT_INIT_BUFFER_SIZE());
-    this.inputBufferSizeInBytes =
-      (int) (long) sparkConf.get(package$.MODULE$.SHUFFLE_FILE_BUFFER_SIZE()) * 1024;
+    this.initialSortBufferSize = (int) (long) sparkConf.get(package$.MODULE$.SHUFFLE_SORT_INIT_BUFFER_SIZE());  // 初始化排序 buffer 大小
+    this.inputBufferSizeInBytes = (int) (long) sparkConf.get(package$.MODULE$.SHUFFLE_FILE_BUFFER_SIZE()) * 1024;
     open();
   }
 
@@ -176,6 +175,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     // generic throwables.
     boolean success = false;
     try {
+      // 数据刷内存
       while (records.hasNext()) {
         insertRecordIntoSorter(records.next());
       }
@@ -219,8 +219,10 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     updatePeakMemoryUsed();
     serBuffer = null;
     serOutputStream = null;
+    // 获取溢出文件信息
     final SpillInfo[] spills = sorter.closeAndGetSpills();
     try {
+      // 合并溢出文件
       partitionLengths = mergeSpills(spills);
     } finally {
       sorter = null;
@@ -239,16 +241,18 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     assert(sorter != null);
     final K key = record._1();
     final int partitionId = partitioner.getPartition(key);
+    // 首先将数据序列化
     serBuffer.reset();
     serOutputStream.writeKey(key, OBJECT_CLASS_TAG);
     serOutputStream.writeValue(record._2(), OBJECT_CLASS_TAG);
     serOutputStream.flush();
 
+    // 记录本地数据长度
     final int serializedRecordSize = serBuffer.size();
     assert (serializedRecordSize > 0);
 
-    sorter.insertRecord(
-      serBuffer.getBuf(), Platform.BYTE_ARRAY_OFFSET, serializedRecordSize, partitionId);
+    // 将序列化数据写到排序器
+    sorter.insertRecord(serBuffer.getBuf(), Platform.BYTE_ARRAY_OFFSET, serializedRecordSize, partitionId);
   }
 
   @VisibleForTesting
@@ -292,26 +296,27 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
   private long[] mergeSpillsUsingStandardWriter(SpillInfo[] spills) throws IOException {
     long[] partitionLengths;
+    // 判断是否压缩
     final boolean compressionEnabled = (boolean) sparkConf.get(package$.MODULE$.SHUFFLE_COMPRESS());
     final CompressionCodec compressionCodec = CompressionCodec$.MODULE$.createCodec(sparkConf);
-    final boolean fastMergeEnabled =
-        (boolean) sparkConf.get(package$.MODULE$.SHUFFLE_UNSAFE_FAST_MERGE_ENABLE());
+
+    // spark.shuffle.unsafe.fastMergeEnabled
+    final boolean fastMergeEnabled = (boolean) sparkConf.get(package$.MODULE$.SHUFFLE_UNSAFE_FAST_MERGE_ENABLE());
+    // lz4 , snapy, zstd, lzf
     final boolean fastMergeIsSupported = !compressionEnabled ||
         CompressionCodec$.MODULE$.supportsConcatenationOfSerializedStreams(compressionCodec);
+
+
     final boolean encryptionEnabled = blockManager.serializerManager().encryptionEnabled();
     final ShuffleMapOutputWriter mapWriter = shuffleExecutorComponents
         .createMapOutputWriter(shuffleId, mapId, partitioner.numPartitions());
     try {
-      // There are multiple spills to merge, so none of these spill files' lengths were counted
-      // towards our shuffle write count or shuffle write time. If we use the slow merge path,
-      // then the final output file's size won't necessarily be equal to the sum of the spill
-      // files' sizes. To guard against this case, we look at the output file's actual size when
-      // computing shuffle bytes written.
+      // 有多个溢出文件需要合并，因此这些溢出文件的长度没有计算在我们的 shuffle 写入计数或 shuffle 写入时间中。
+      // 如果我们使用慢速合并路径，则最终输出文件的大小不一定等于溢出文件大小的总和。
+      // 为了防范这种情况，我们在计算已写入的 shuffle 字节时查看输出文件的实际大小。
       //
-      // We allow the individual merge methods to report their own IO times since different merge
-      // strategies use different IO techniques.  We count IO during merge towards the shuffle
-      // write time, which appears to be consistent with the "not bypassing merge-sort" branch in
-      // ExternalSorter.
+      // 我们允许各个合并方法报告自己的 IO 时间，因为不同的合并策略使用不同的 IO 技术。
+      // 我们将合并过程中的 IO 计入 shuffle 写入时间，这似乎与 ExternalSorter 中的“未绕过合并排序”分支是一致的。
       if (fastMergeEnabled && fastMergeIsSupported) {
         // Compression is disabled or we are using an IO compression codec that supports
         // decompression of concatenated compressed streams, so we can perform a fast spill merge

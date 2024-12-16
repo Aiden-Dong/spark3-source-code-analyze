@@ -41,6 +41,7 @@ import org.apache.spark.util.{SparkFatalException, ThreadUtils}
 
 /**
  * Common trait for all broadcast exchange implementations to facilitate pattern matching.
+ * 所有广播交换实现的共同Trait，以促进模式匹配。
  */
 trait BroadcastExchangeLike extends Exchange {
 
@@ -50,14 +51,14 @@ trait BroadcastExchangeLike extends Exchange {
   def runId: UUID = UUID.randomUUID
 
   /**
-   * The asynchronous job that prepares the broadcast relation.
+   * 准备广播关系的异步作业。
    */
   def relationFuture: Future[broadcast.Broadcast[Any]]
 
   /**
-   * The asynchronous job that materializes the broadcast. It's used for registering callbacks on
-   * `relationFuture`. Note that calling this method may not start the execution of broadcast job.
-   * It also does the preparations work, such as waiting for the subqueries.
+   * 实现广播的异步作业。它用于在
+   * `relationFuture` 上注册回调。请注意，调用此方法可能不会启动广播作业的执行。
+   * 它还执行准备工作，例如等待子查询。
    */
   final def submitBroadcastJob: scala.concurrent.Future[broadcast.Broadcast[Any]] = executeQuery {
     completionFuture
@@ -148,28 +149,23 @@ case class BroadcastExchangeExec(
             val relation = mode.transform(input, Some(numRows))
 
             val dataSize = relation match {
-              case map: HashedRelation =>
-                map.estimatedSize
-              case arr: Array[InternalRow] =>
-                arr.map(_.asInstanceOf[UnsafeRow].getSizeInBytes.toLong).sum
+              case map: HashedRelation =>  map.estimatedSize
+              case arr: Array[InternalRow] => arr.map(_.asInstanceOf[UnsafeRow].getSizeInBytes.toLong).sum
               case _ =>
-                throw new SparkException("[BUG] BroadcastMode.transform returned unexpected " +
-                  s"type: ${relation.getClass.getName}")
+                throw new SparkException(s"[BUG] BroadcastMode.transform returned unexpected type: ${relation.getClass.getName}")
             }
 
             longMetric("dataSize") += dataSize
             if (dataSize >= MAX_BROADCAST_TABLE_BYTES) {
-              throw QueryExecutionErrors.cannotBroadcastTableOverMaxTableBytesError(
-                MAX_BROADCAST_TABLE_BYTES, dataSize)
+              throw QueryExecutionErrors.cannotBroadcastTableOverMaxTableBytesError(MAX_BROADCAST_TABLE_BYTES, dataSize)
             }
 
             val beforeBroadcast = System.nanoTime()
             longMetric("buildTime") += NANOSECONDS.toMillis(beforeBroadcast - beforeBuild)
 
-            // Broadcast the relation
+            // 将数据进行广播
             val broadcasted = sparkContext.broadcast(relation)
-            longMetric("broadcastTime") += NANOSECONDS.toMillis(
-              System.nanoTime() - beforeBroadcast)
+            longMetric("broadcastTime") += NANOSECONDS.toMillis(System.nanoTime() - beforeBroadcast)
             val executionId = sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
             SQLMetrics.postDriverMetricUpdates(sparkContext, executionId, metrics.values.toSeq)
             promise.trySuccess(broadcasted)
@@ -179,8 +175,7 @@ case class BroadcastExchangeExec(
             // SparkFatalException, which is a subclass of Exception. ThreadUtils.awaitResult
             // will catch this exception and re-throw the wrapped fatal throwable.
             case oe: OutOfMemoryError =>
-              val ex = new SparkFatalException(
-                QueryExecutionErrors.notEnoughMemoryToBuildAndBroadcastTableError(oe))
+              val ex = new SparkFatalException(QueryExecutionErrors.notEnoughMemoryToBuildAndBroadcastTableError(oe))
               promise.tryFailure(ex)
               throw ex
             case e if !NonFatal(e) =>
@@ -203,6 +198,7 @@ case class BroadcastExchangeExec(
     throw QueryExecutionErrors.executeCodePathUnsupportedError("BroadcastExchange")
   }
 
+  // 执行广播操作
   override protected[sql] def doExecuteBroadcast[T](): broadcast.Broadcast[T] = {
     try {
       relationFuture.get(timeout, TimeUnit.SECONDS).asInstanceOf[broadcast.Broadcast[T]]

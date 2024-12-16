@@ -238,15 +238,12 @@ private[spark] abstract class MemoryManager(
   }
 
   /**
-   * The default page size, in bytes.
+   * 默认页面大小（以字节为单位）。
    *
-   * If user didn't explicitly set "spark.buffer.pageSize", we figure out the default value
-   * by looking at the number of cores available to the process, and the total amount of memory,
-   * and then divide it by a factor of safety.
+   * 如果用户没有明确设置 "spark.buffer.pageSize"，我们通过查看可用于进程的核心数量和总内存量来确定默认值，然后将其除以一个安全因子。
    *
-   * SPARK-37593 If we are using G1GC, it's better to take the LONG_ARRAY_OFFSET
-   * into consideration so that the requested memory size is power of 2
-   * and can be divided by G1 heap region size to reduce memory waste within one G1 region.
+   * SPARK-37593 如果我们使用 G1GC，考虑 LONG_ARRAY_OFFSET 是更好的选择，
+   * 以便请求的内存大小是 2 的幂，并且可以被 G1 堆区域大小整除，从而减少一个 G1 区域内的内存浪费
    */
   private lazy val defaultPageSizeBytes = {
     val minPageSize = 1L * 1024 * 1024   // 1MB
@@ -254,10 +251,14 @@ private[spark] abstract class MemoryManager(
     val cores = if (numCores > 0) numCores else Runtime.getRuntime.availableProcessors()
     // Because of rounding to next power of 2, we may have safetyFactor as 8 in worst case
     val safetyFactor = 16
+
+    // 最大内存大小
     val maxTungstenMemory: Long = tungstenMemoryMode match {
       case MemoryMode.ON_HEAP => onHeapExecutionMemoryPool.poolSize
       case MemoryMode.OFF_HEAP => offHeapExecutionMemoryPool.poolSize
     }
+
+    // 内存大小 / core / 16
     val size = ByteArrayMethods.nextPowerOf2(maxTungstenMemory / cores / safetyFactor)
     val chosenPageSize = math.min(maxPageSize, math.max(minPageSize, size))
     if (isG1GC && tungstenMemoryMode == MemoryMode.ON_HEAP) {

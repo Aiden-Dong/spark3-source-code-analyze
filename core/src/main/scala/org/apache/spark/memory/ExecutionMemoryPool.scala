@@ -67,26 +67,20 @@ private[memory] class ExecutionMemoryPool(
   }
 
   /**
-   * Try to acquire up to `numBytes` of memory for the given task and return the number of bytes
-   * obtained, or 0 if none can be allocated.
+   * 尝试为给定任务获取最多 `numBytes` 的内存，并返回获得的字节数；如果无法分配，则返回 0。
    *
-   * This call may block until there is enough free memory in some situations, to make sure each
-   * task has a chance to ramp up to at least 1 / 2N of the total memory pool (where N is the # of
-   * active tasks) before it is forced to spill. This can happen if the number of tasks increase
-   * but an older task had a lot of memory already.
+   * 在某些情况下，此调用可能会阻塞，直到有足够的空闲内存，
+   *  以确保每个任务在被迫溢出之前有机会逐步增加到总内存池的至少 1 / 2N（其中 N 是活跃任务的数量）。
+   * 如果任务数量增加，但较旧的任务已经占用了大量内存，则可能会发生这种情况。
    *
-   * @param numBytes number of bytes to acquire
-   * @param taskAttemptId the task attempt acquiring memory
-   * @param maybeGrowPool a callback that potentially grows the size of this pool. It takes in
-   *                      one parameter (Long) that represents the desired amount of memory by
-   *                      which this pool should be expanded.
-   * @param computeMaxPoolSize a callback that returns the maximum allowable size of this pool
-   *                           at this given moment. This is not a field because the max pool
-   *                           size is variable in certain cases. For instance, in unified
-   *                           memory management, the execution pool can be expanded by evicting
-   *                           cached blocks, thereby shrinking the storage pool.
+   * @param numBytes 要获取的字节数
+   * @param taskAttemptId 正在获取内存的任务尝试 ID
+   * @param maybeGrowPool 一个可能扩展此内存池大小的回调。它接受一个参数（Long），表示此池应扩展的期望内存量。
+   * @param computeMaxPoolSize 一个回调，返回此时允许的最大池大小。
+   *                           它不是一个字段，因为在某些情况下最大池大小是可变的。
+   *                           例如，在统一内存管理中，可以通过驱逐缓存块来扩展执行池，从而缩小存储池。
    *
-   * @return the number of bytes granted to the task.
+   * @return 授予任务的字节数。
    */
   private[memory] def acquireMemory(
       numBytes: Long,

@@ -32,10 +32,9 @@ import org.apache.spark.sql.execution.{CodegenSupport, SparkPlan}
 import org.apache.spark.sql.execution.metric.SQLMetrics
 
 /**
- * Performs an inner hash join of two child relations.  When the output RDD of this operator is
- * being constructed, a Spark job is asynchronously started to calculate the values for the
- * broadcast relation.  This data is then placed in a Spark broadcast variable.  The streamed
- * relation is not shuffled.
+ * 执行两个子关系的内部哈希Join。
+ * 当构造此运算符的输出 RDD 时，将异步启动 Spark 作业来计算广播关系的值。然后将此数据放置在 Spark 广播变量中。
+ * 流式传输的关系不会被打乱。
  */
 case class BroadcastHashJoinExec(
     leftKeys: Seq[Expression],
@@ -139,7 +138,9 @@ case class BroadcastHashJoinExec(
   protected override def doExecute(): RDD[InternalRow] = {
     val numOutputRows = longMetric("numOutputRows")
 
+    // 将对应物理子树广播
     val broadcastRelation = buildPlan.executeBroadcast[HashedRelation]()
+
     if (isNullAwareAntiJoin) {
       streamedPlan.execute().mapPartitionsInternal { streamedIter =>
         val hashed = broadcastRelation.value.asReadOnlyCopy()

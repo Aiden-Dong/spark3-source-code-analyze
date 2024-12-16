@@ -93,10 +93,8 @@ final class ShuffleExternalSorter extends MemoryConsumer implements ShuffleCheck
   private final int diskWriteBufferSize;
 
   /**
-   * Memory pages that hold the records being sorted. The pages in this list are freed when
-   * spilling, although in principle we could recycle these pages across spills (on the other hand,
-   * this might not be necessary if we maintained a pool of re-usable pages in the TaskMemoryManager
-   * itself).
+   * 存放正在排序记录的内存页面。
+   * 这个列表中的页面在溢出时被释放，尽管原则上我们可以在溢出之间回收这些页面（另一方面，如果我们在 TaskMemoryManager 中维护一个可重用页面的池，这可能就不是必需的）。
    */
   private final LinkedList<MemoryBlock> allocatedPages = new LinkedList<>();
 
@@ -105,7 +103,7 @@ final class ShuffleExternalSorter extends MemoryConsumer implements ShuffleCheck
   /** Peak memory used by this sorter so far, in bytes. **/
   private long peakMemoryUsedBytes;
 
-  // These variables are reset after spilling:
+  // 主要用来存放排序指针
   @Nullable private ShuffleInMemorySorter inMemSorter;
   @Nullable private MemoryBlock currentPage = null;
   private long pageCursor = -1;
@@ -121,24 +119,33 @@ final class ShuffleExternalSorter extends MemoryConsumer implements ShuffleCheck
       int numPartitions,
       SparkConf conf,
       ShuffleWriteMetricsReporter writeMetrics) throws SparkException {
+
     super(memoryManager,
-      (int) Math.min(PackedRecordPointer.MAXIMUM_PAGE_SIZE_BYTES, memoryManager.pageSizeBytes()),
-      memoryManager.getTungstenMemoryMode());
+         // min(128M, spark.buffer.pageSize(1M-64M),  内存大小/core/16)
+         (int) Math.min(PackedRecordPointer.MAXIMUM_PAGE_SIZE_BYTES, memoryManager.pageSizeBytes()),
+         // spark.memory.offHeap.enabled
+         memoryManager.getTungstenMemoryMode());
+
     this.taskMemoryManager = memoryManager;
     this.blockManager = blockManager;
     this.taskContext = taskContext;
     this.numPartitions = numPartitions;
-    // Use getSizeAsKb (not bytes) to maintain backwards compatibility if no units are provided
-    this.fileBufferSizeBytes =
-        (int) (long) conf.get(package$.MODULE$.SHUFFLE_FILE_BUFFER_SIZE()) * 1024;
+
+    // 使用 getSizeAsKb（而不是字节）以保持向后兼容，如果没有提供单位。   spark.shuffle.file.buffer
+    this.fileBufferSizeBytes = (int) (long) conf.get(package$.MODULE$.SHUFFLE_FILE_BUFFER_SIZE()) * 1024;
+
+    // spark.shuffle.spill.numElementsForceSpillThreshold
     this.numElementsForSpillThreshold =
         (int) conf.get(package$.MODULE$.SHUFFLE_SPILL_NUM_ELEMENTS_FORCE_SPILL_THRESHOLD());
+
     this.writeMetrics = writeMetrics;
     this.inMemSorter = new ShuffleInMemorySorter(
       this, initialSize, (boolean) conf.get(package$.MODULE$.SHUFFLE_SORT_USE_RADIXSORT()));
+
     this.peakMemoryUsedBytes = getMemoryUsage();
-    this.diskWriteBufferSize =
-        (int) (long) conf.get(package$.MODULE$.SHUFFLE_DISK_WRITE_BUFFER_SIZE());
+
+    // spark.shuffle.spill.diskWriteBufferSize
+    this.diskWriteBufferSize = (int) (long) conf.get(package$.MODULE$.SHUFFLE_DISK_WRITE_BUFFER_SIZE());
     this.partitionChecksums = createPartitionChecksums(numPartitions, conf);
   }
 
@@ -350,12 +357,13 @@ final class ShuffleExternalSorter extends MemoryConsumer implements ShuffleCheck
   }
 
   /**
-   * Checks whether there is enough space to insert an additional record in to the sort pointer
-   * array and grows the array if additional space is required. If the required space cannot be
-   * obtained, then the in-memory data will be spilled to disk.
+   * 检查是否有足够的空间在排序指针数组中插入额外记录，如果需要，则扩展数组。
+   * 如果无法获取所需的空间，则内存中的数据将溢出到磁盘。
    */
   private void growPointerArrayIfNecessary() throws IOException {
     assert(inMemSorter != null);
+
+    // 标识数组没有空间存放更多的指针记录
     if (!inMemSorter.hasSpaceForAnotherRecord()) {
       long used = inMemSorter.getMemoryUsage();
       LongArray array;
@@ -378,24 +386,23 @@ final class ShuffleExternalSorter extends MemoryConsumer implements ShuffleCheck
       if (inMemSorter.hasSpaceForAnotherRecord()) {
         freeArray(array);
       } else {
+        // 扩容成功， 迁移数据
         inMemSorter.expandPointerArray(array);
       }
     }
   }
 
   /**
-   * Allocates more memory in order to insert an additional record. This will request additional
-   * memory from the memory manager and spill if the requested memory can not be obtained.
+   * 为插入额外记录分配更多内存。如果无法获取请求的内存，将向内存管理器请求额外内存并进行溢出处理。
    *
-   * @param required the required space in the data page, in bytes, including space for storing
-   *                      the record size. This must be less than or equal to the page size (records
-   *                      that exceed the page size are handled via a different code path which uses
-   *                      special overflow pages).
+   * @param required 数据页面中所需的空间（以字节为单位），包括存储记录大小的空间。
+   *                 该值必须小于或等于页面大小（超过页面大小的记录通过不同的代码路径处理，该路径使用特殊的溢出页面）。
    */
   private void acquireNewPageIfNecessary(int required) {
     if (currentPage == null ||
       pageCursor + required > currentPage.getBaseOffset() + currentPage.size() ) {
       // TODO: try to find space in previous pages
+      // 分配一个页块数据来存放数据，
       currentPage = allocatePage(required);
       pageCursor = currentPage.getBaseOffset();
       allocatedPages.add(currentPage);
@@ -415,7 +422,7 @@ final class ShuffleExternalSorter extends MemoryConsumer implements ShuffleCheck
         numElementsForSpillThreshold);
       spill();
     }
-
+    // 检查指针数组是否有足够空间存放指针数据
     growPointerArrayIfNecessary();
     final int uaoSize = UnsafeAlignedOffset.getUaoSize();
     // Need 4 or 8 bytes to store the record length.

@@ -36,8 +36,8 @@ public abstract class MemoryConsumer {
 
   protected MemoryConsumer(TaskMemoryManager taskMemoryManager, long pageSize, MemoryMode mode) {
     this.taskMemoryManager = taskMemoryManager;
-    this.pageSize = pageSize;
-    this.mode = mode;
+    this.pageSize = pageSize;                      // min(128M, spark.buffer.pageSize(1M-64M),  内存大小/core/16)
+    this.mode = mode;                              // spark.memory.offHeap.enabled
   }
 
   protected MemoryConsumer(TaskMemoryManager taskMemoryManager, MemoryMode mode) {

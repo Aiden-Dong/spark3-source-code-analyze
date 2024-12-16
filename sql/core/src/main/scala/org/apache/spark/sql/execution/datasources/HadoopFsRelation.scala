@@ -28,7 +28,7 @@ import org.apache.spark.sql.types.{StructField, StructType}
  *充当从数据源读取所需的所有元数据的容器。
  * 所有关于模式和分区的发现、解析和合并逻辑都已移除。
  *
- * @param location 一个 [[FileIndex]]，它可以列举出组成这个关系的所有文件的位置。
+ * @param location 一个 [[FileIndex]]，它可以列举出组成这个关系的所有文件的位置。  [[CatalogFileIndex]]
  * @param partitionSchema 用于分区关系的列（如果有的话）的Schema。
  * @param dataSchema 任何剩余列的schema。请注意，如果实际数据文件中存在任何分区列，它们也会被保留。
  * @param bucketSpec 描述了桶分配（根据某些列值对文件进行哈希分区）。

@@ -40,21 +40,15 @@ import org.apache.spark.sql.internal.SQLConf.LegacyBehaviorPolicy
 import org.apache.spark.sql.types._
 
 /**
- * A Parquet [[ReadSupport]] implementation for reading Parquet records as Catalyst
- * [[InternalRow]]s.
- *
- * The API interface of [[ReadSupport]] is a little bit over complicated because of historical
- * reasons.  In older versions of parquet-mr (say 1.6.0rc3 and prior), [[ReadSupport]] need to be
- * instantiated and initialized twice on both driver side and executor side.  The [[init()]] method
- * is for driver side initialization, while [[prepareForRead()]] is for executor side.  However,
- * starting from parquet-mr 1.6.0, it's no longer the case, and [[ReadSupport]] is only instantiated
- * and initialized on executor side.  So, theoretically, now it's totally fine to combine these two
- * methods into a single initialization method.  The only reason (I could think of) to still have
- * them here is for parquet-mr API backwards-compatibility.
- *
- * Due to this reason, we no longer rely on [[ReadContext]] to pass requested schema from [[init()]]
- * to [[prepareForRead()]], but use a private `var` for simplicity.
- */
+ * 一个用于将 Parquet 记录读取为 Catalyst InternalRow 的 Parquet ReadSupport 实现。
+ * ReadSupport 的 API 接口由于历史原因而显得有些复杂。
+ * 在旧版本的 parquet-mr（例如 1.6.0rc3 及更早版本）中，ReadSupport 需要在驱动端和执行端分别实例化和初始化两次。
+ * init() 方法用于驱动端初始化，而 prepareForRead() 用于执行端初始化。
+ * 然而，从 parquet-mr 1.6.0 开始，情况不再是这样，ReadSupport 只在执行端实例化和初始化。
+ * 因此，理论上，现在可以将这两个方法合并为一个单一的初始化方法。我唯一能想到的原因是出于 parquet-mr API 的向后兼容性。
+ * 由于这个原因，我们不再依赖 ReadContext 将请求的模式从 init() 传递到 prepareForRead()，而是使用一个私有变量来简化。
+ **/
+
 class ParquetReadSupport(
     val convertTz: Option[ZoneId],
     enableVectorizedReader: Boolean,

@@ -178,30 +178,24 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
 
     def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
 
-      // If it is an equi-join, we first look at the join hints w.r.t. the following order:
-      //   1. broadcast hint: pick broadcast hash join if the join type is supported. If both sides
-      //      have the broadcast hints, choose the smaller side (based on stats) to broadcast.
-      //   2. sort merge hint: pick sort merge join if join keys are sortable.
-      //   3. shuffle hash hint: We pick shuffle hash join if the join type is supported. If both
-      //      sides have the shuffle hash hints, choose the smaller side (based on stats) as the
-      //      build side.
-      //   4. shuffle replicate NL hint: pick cartesian product if join type is inner like.
+
+      // 如果是等连接，我们首先查看连接提示。以下顺序：
+      // 1. 广播提示：如果支持连接类型，则选择广播哈希连接。如果双方有广播提示，选择较小的一侧（基于统计数据）进行广播。
+      // 2. 排序合并提示：如果连接键可排序，则选择排序合并连接。
+      // 3. shuffle hash 提示：如果支持连接类型，我们选择 shuffle hash join。
+      //   如果两者都边有随机哈希提示，选择较小的边（基于统计数据）作为构建端。
+      // 4. shuffle复制NL提示：如果连接类型是inner like，则选择笛卡尔积。
       //
-      // If there is no hint or the hints are not applicable, we follow these rules one by one:
-      //   1. Pick broadcast hash join if one side is small enough to broadcast, and the join type
-      //      is supported. If both sides are small, choose the smaller side (based on stats)
-      //      to broadcast.
-      //   2. Pick shuffle hash join if one side is small enough to build local hash map, and is
-      //      much smaller than the other side, and `spark.sql.join.preferSortMergeJoin` is false.
-      //   3. Pick sort merge join if the join keys are sortable.
-      //   4. Pick cartesian product if join type is inner like.
-      //   5. Pick broadcast nested loop join as the final solution. It may OOM but we don't have
-      //      other choice.
+      // 如果没有提示或者提示不适用，我们一一遵循以下规则：
+      // 1. 如果一侧足够小可以广播，则选择广播哈希连接，以及连接类型支持。如果两边都很小，选择较小的一边（根据统计数据） 广播。
+      // 2. 如果一侧足够小以构建本地哈希映射，则选择 shuffle hash join，并且是比另一边小得多，并且 `spark.sql.join.preferSortMergeJoin` 为 false。
+      // 3. 如果连接键可排序，则选择排序合并连接。
+      // 4. 如果连接类型是inner like，则选择笛卡尔积。
+      // 5. 选择广播嵌套循环连接作为最终解决方案。它可能会 OOM 但我们没有其他选择。
       case j @ ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, nonEquiCond,
           _, left, right, hint) =>
         def createBroadcastHashJoin(onlyLookingAtHint: Boolean) = {
-          val buildSide = getBroadcastBuildSide(
-            left, right, joinType, hint, onlyLookingAtHint, conf)
+          val buildSide = getBroadcastBuildSide(left, right, joinType, hint, onlyLookingAtHint, conf)
           checkHintBuildSide(onlyLookingAtHint, buildSide, joinType, hint, true)
           buildSide.map {
             buildSide =>

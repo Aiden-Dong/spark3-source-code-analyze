@@ -126,6 +126,7 @@ private[hive] class HiveMetastoreCatalog(sparkSession: SparkSession) extends Log
   private def isParquetProperty(key: String) =
     key.startsWith("parquet.") || key.contains(".parquet.")
 
+  // 将 HiveTableRelation 转为 LogicalRelation
   def convert(relation: HiveTableRelation, isWrite: Boolean): LogicalRelation = {
     val serde = relation.tableMeta.storage.serde.getOrElse("").toLowerCase(Locale.ROOT)
 

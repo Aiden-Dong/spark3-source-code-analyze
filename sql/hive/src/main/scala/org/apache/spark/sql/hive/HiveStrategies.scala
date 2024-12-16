@@ -180,17 +180,16 @@ object HiveAnalysis extends Rule[LogicalPlan] {
 }
 
 /**
- * Relation conversion from metastore relations to data source relations for better performance
+ * 从元存储关系到数据源关系的转换，以提高性能
  *
- * - When writing to non-partitioned Hive-serde Parquet/Orc tables
- * - When writing to partitioned Hive-serde Parquet/Orc tables when
- *   `spark.sql.hive.convertInsertingPartitionedTable` is true
- * - When writing to directory with Hive-serde
- * - When writing to non-partitioned Hive-serde Parquet/ORC tables using CTAS
- * - When scanning Hive-serde Parquet/ORC tables
+ * - 当写入非分区的 Hive-serde Parquet/ORC 表时
+ * - 当写入分区的 Hive-serde Parquet/ORC 表时，且 `spark.sql.hive.convertInsertingPartitionedTable` 为 true
+ * - 当写入使用 Hive-serde 的目录时
+ * - 当使用 CTAS 写入非分区的 Hive-serde Parquet/ORC 表时
+ * - 当扫描 Hive-serde Parquet/ORC 表时
  *
- * This rule must be run before all other DDL post-hoc resolution rules, i.e.
- * `PreprocessTableCreation`, `PreprocessTableInsertion`, `DataSourceAnalysis` and `HiveAnalysis`.
+ * 该规则必须在所有其他 DDL 后续解析规则之前运行，即：
+ * `PreprocessTableCreation`、`PreprocessTableInsertion`、`DataSourceAnalysis` 和 `HiveAnalysis`。
  */
 case class RelationConversions(
     sessionCatalog: HiveSessionCatalog) extends Rule[LogicalPlan] {

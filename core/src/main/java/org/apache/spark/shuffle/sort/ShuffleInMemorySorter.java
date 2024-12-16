@@ -39,28 +39,24 @@ final class ShuffleInMemorySorter {
   private final MemoryConsumer consumer;
 
   /**
-   * An array of record pointers and partition ids that have been encoded by
-   * {@link PackedRecordPointer}. The sort operates on this array instead of directly manipulating
-   * records.
+   * 一个由 {@link PackedRecordPointer} 编码的记录指针和分区 ID 的数组。排序操作在此数组上进行，而不是直接操作记录。
    *
-   * Only part of the array will be used to store the pointers, the rest part is preserved as
-   * temporary buffer for sorting.
+   * 只有数组的一部分将用于存储指针，其余部分将保留为排序的临时缓冲区。
    */
   private LongArray array;
 
   /**
-   * Whether to use radix sort for sorting in-memory partition ids. Radix sort is much faster
-   * but requires additional memory to be reserved memory as pointers are added.
+   * 是否使用基数排序对内存中的分区 ID 进行排序。基数排序速度更快，但在添加指针时需要额外保留内存。
    */
   private final boolean useRadixSort;
 
   /**
-   * The position in the pointer array where new records can be inserted.
+   * 指针数组中可以插入新记录的位置。
    */
   private int pos = 0;
 
   /**
-   * How many records could be inserted, because part of the array should be left for sorting.
+   * 可以插入多少记录，因为数组的一部分应该留作排序使用。
    */
   private int usableCapacity = 0;
 
@@ -71,13 +67,13 @@ final class ShuffleInMemorySorter {
     assert (initialSize > 0);
     this.initialSize = initialSize;
     this.useRadixSort = useRadixSort;
-    this.array = consumer.allocateArray(initialSize);
+    this.array = consumer.allocateArray(initialSize);   // 分配指定内存空间数组
     this.usableCapacity = getUsableCapacity();
   }
 
+  // 如果使用 useRadixSort 则预留一半空间，否则预留1/3, 用于排序
   private int getUsableCapacity() {
-    // Radix sort requires same amount of used memory as buffer, Tim sort requires
-    // half of the used memory as buffer.
+
     return (int) (array.size() / (useRadixSort ? 2 : 1.5));
   }
 
@@ -123,6 +119,7 @@ final class ShuffleInMemorySorter {
     usableCapacity = getUsableCapacity();
   }
 
+  // 表示是否还有足够的空间来存储数据
   public boolean hasSpaceForAnotherRecord() {
     return pos < usableCapacity;
   }
@@ -132,14 +129,11 @@ final class ShuffleInMemorySorter {
   }
 
   /**
-   * Inserts a record to be sorted.
+   * 插入一个待排序的记录。
    *
-   * @param recordPointer a pointer to the record, encoded by the task memory manager. Due to
-   *                      certain pointer compression techniques used by the sorter, the sort can
-   *                      only operate on pointers that point to locations in the first
-   *                      {@link PackedRecordPointer#MAXIMUM_PAGE_SIZE_BYTES} bytes of a data page.
-   * @param partitionId the partition id, which must be less than or equal to
-   *                    {@link PackedRecordPointer#MAXIMUM_PARTITION_ID}.
+   * @param recordPointer 指向记录的指针，由任务内存管理器编码。
+   *                      由于排序器使用了某些指针压缩技术，排序只能在指向数据页面前 {@link PackedRecordPointer#MAXIMUM_PAGE_SIZE_BYTES} 字节内的位置的指针上进行操作。
+   * @param partitionId 分区 ID，必须小于或等于 {@link PackedRecordPointer#MAXIMUM_PARTITION_ID}。
    */
   public void insertRecord(long recordPointer, int partitionId) {
     if (!hasSpaceForAnotherRecord()) {

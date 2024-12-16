@@ -260,6 +260,7 @@ trait JoinSelectionHelper {
     } else {
       canBroadcastBySize(left, conf) && !hintToNotBroadcastLeft(hint)
     }
+
     val buildRight = if (hintOnly) {
       hintToBroadcastRight(hint)
     } else {

@@ -33,23 +33,14 @@ object Statistics {
 }
 
 /**
- * Estimates of various statistics.  The default estimation logic simply lazily multiplies the
- * corresponding statistic produced by the children.  To override this behavior, override
- * `statistics` and assign it an overridden version of `Statistics`.
+ * 各种统计数据的估算。默认的估算逻辑是懒惰地乘以子节点生成的相应统计数据。要覆盖此行为，可以重写 statistics 并为其分配一个重写版本的 Statistics。
+ * 注意: 具体的和/或重写的统计字段应该关注实现的性能。原因是估算可能会在性能关键的过程中被触发，例如查询计划的规划。
+ * 请注意，我们在这里使用 BigInt，因为在基数估算中容易溢出 64 位整数（例如，笛卡尔积连接）。
  *
- * '''NOTE''': concrete and/or overridden versions of statistics fields should pay attention to the
- * performance of the implementations.  The reason is that estimations might get triggered in
- * performance-critical processes, such as query plan planning.
- *
- * Note that we are using a BigInt here since it is easy to overflow a 64-bit integer in
- * cardinality estimation (e.g. cartesian joins).
- *
- * @param sizeInBytes Physical size in bytes. For leaf operators this defaults to 1, otherwise it
- *                    defaults to the product of children's `sizeInBytes`.
- * @param rowCount Estimated number of rows.
- * @param attributeStats Statistics for Attributes.
- * @param isRuntime Whether the statistics is inferred from query stage runtime statistics during
- *                  adaptive query execution.
+ * @param sizeInBytes 以字节为单位的物理大小。对于叶子操作符，默认值为 1；否则，默认为子节点的 sizeInBytes 的乘积。
+ * @param rowCount 估计的行数。
+ * @param attributeStats 属性的统计信息。
+ * @param isRuntime 统计信息是否是从自适应查询执行期间查询阶段的运行时统计信息推断的。
  */
 case class Statistics(
     sizeInBytes: BigInt,

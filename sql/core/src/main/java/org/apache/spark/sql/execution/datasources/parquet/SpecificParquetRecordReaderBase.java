@@ -80,7 +80,7 @@ public abstract class SpecificParquetRecordReaderBase<T> extends RecordReader<Vo
    * The total number of rows this RecordReader will eventually read. The sum of the
    * rows of all the row groups.
    */
-  protected long totalRowCount;
+  protected long totalRowCount;     // 总的数据量
 
   protected ParquetRowGroupReader reader;
 

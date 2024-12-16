@@ -102,9 +102,9 @@ public class TaskMemoryManager {
   private final long taskAttemptId;
 
   /**
-   * Tracks whether we're on-heap or off-heap. For off-heap, we short-circuit most of these methods
-   * without doing any masking or lookups. Since this branching should be well-predicted by the JIT,
-   * this extra layer of indirection / abstraction hopefully shouldn't be too expensive.
+   * 跟踪我们是在堆上还是在堆外。
+   *   对于堆外情况，我们会短路大部分这些方法，而不进行任何掩码或查找。
+   *   由于这个分支应该被 JIT 良好预测，因此这额外的间接层/抽象希望不会太昂贵。
    */
   final MemoryMode tungstenMemoryMode;
 
@@ -130,48 +130,36 @@ public class TaskMemoryManager {
   }
 
   /**
-   * Acquire N bytes of memory for a consumer. If there is no enough memory, it will call
-   * spill() of consumers to release more memory.
+   * 为消费者获取 N 字节的内存。如果内存不足，它将调用消费者的 spill() 以释放更多内存。
    *
-   * @return number of bytes successfully granted (<= N).
+   * @return 成功授予的字节数（<= N）。
    */
   public long acquireExecutionMemory(long required, MemoryConsumer requestingConsumer) {
     assert(required >= 0);
     assert(requestingConsumer != null);
     MemoryMode mode = requestingConsumer.getMode();
-    // If we are allocating Tungsten pages off-heap and receive a request to allocate on-heap
-    // memory here, then it may not make sense to spill since that would only end up freeing
-    // off-heap memory. This is subject to change, though, so it may be risky to make this
-    // optimization now in case we forget to undo it late when making changes.
+    // 如果我们在堆外分配 Tungsten 页面，并在这里收到请求以分配堆内内存，那么溢出可能没有意义，因为这只会释放堆外内存。
+    // 然而，这个情况可能会发生变化，因此现在进行这个优化可能风险较大，以防我们在进行更改时忘记撤销它。
     synchronized (this) {
       long got = memoryManager.acquireExecutionMemory(required, taskAttemptId, mode);
 
-      // Try to release memory from other consumers first, then we can reduce the frequency of
-      // spilling, avoid to have too many spilled files.
+      // 首先尝试从其他消费者那里释放内存，然后我们可以减少溢出的频率，避免产生过多的溢出文件。
       if (got < required) {
         logger.debug("Task {} need to spill {} for {}", taskAttemptId,
           Utils.bytesToString(required - got), requestingConsumer);
-        // We need to call spill() on consumers to free up more memory. We want to optimize for two
-        // things:
-        // * Minimize the number of spill calls, to reduce the number of spill files and avoid small
-        //   spill files.
-        // * Avoid spilling more data than necessary - if we only need a little more memory, we may
-        //   not want to spill as much data as possible. Many consumers spill more than the
-        //   requested amount, so we can take that into account in our decisions.
-        // We use a heuristic that selects the smallest memory consumer with at least `required`
-        // bytes of memory in an attempt to balance these factors. It may work well if there are
-        // fewer larger requests, but can result in many small spills if there are many smaller
-        // requests.
+        // 我们需要调用消费者的 spill() 以释放更多内存。我们希望优化以下两点：
+        // * 尽量减少溢出调用的次数，以减少溢出文件的数量并避免生成小的溢出文件。
+        // * 避免溢出比所需更多的数据——如果我们只需要一点额外内存，可能不希望溢出尽可能多的数据。
+        //   许多消费者溢出的数据量超过了请求的量，所以我们可以在决策时考虑这一点。
+        // 我们使用一种启发式方法，选择至少拥有 `required` 字节内存的最小内存消费者，以平衡这些因素。
+        //   如果请求较少且较大，该方法可能表现良好，但如果有很多小请求，则可能导致许多小溢出。
 
-        // Build a map of consumer in order of memory usage to prioritize spilling. Assign current
-        // consumer (if present) a nominal memory usage of 0 so that it is always last in priority
-        // order. The map will include all consumers that have previously acquired memory.
+        // 根据内存使用情况构建消费者的映射，以优先考虑溢出。为当前消费者（如果存在）分配一个名义内存使用量为 0，使其始终在优先级顺序中排在最后。该映射将包括所有以前获得过内存的消费者。
         TreeMap<Long, List<MemoryConsumer>> sortedConsumers = new TreeMap<>();
         for (MemoryConsumer c: consumers) {
           if (c.getUsed() > 0 && c.getMode() == mode) {
             long key = c == requestingConsumer ? 0 : c.getUsed();
-            List<MemoryConsumer> list =
-                sortedConsumers.computeIfAbsent(key, k -> new ArrayList<>(1));
+            List<MemoryConsumer> list = sortedConsumers.computeIfAbsent(key, k -> new ArrayList<>(1));
             list.add(c);
           }
         }
@@ -288,22 +276,22 @@ public class TaskMemoryManager {
   }
 
   /**
-   * Allocate a block of memory that will be tracked in the MemoryManager's page table; this is
-   * intended for allocating large blocks of Tungsten memory that will be shared between operators.
+   * 分配一块内存，将在 MemoryManager 的页表中进行跟踪；这用于分配将在操作符之间共享的大块 Tungsten 内存。
    *
-   * Returns `null` if there was not enough memory to allocate the page. May return a page that
-   * contains fewer bytes than requested, so callers should verify the size of returned pages.
+   * 如果没有足够的内存来分配页面，则返回 `null`。可能返回的页面包含的字节数少于请求的数量，因此调用者应验证返回页面的大小。
    *
    * @throws TooLargePageException
    */
   public MemoryBlock allocatePage(long size, MemoryConsumer consumer) {
     assert(consumer != null);
     assert(consumer.getMode() == tungstenMemoryMode);
+
     if (size > MAXIMUM_PAGE_SIZE_BYTES) {
       throw new TooLargePageException(size);
     }
 
     long acquired = acquireExecutionMemory(size, consumer);
+
     if (acquired <= 0) {
       return null;
     }
@@ -320,6 +308,7 @@ public class TaskMemoryManager {
     }
     MemoryBlock page = null;
     try {
+      // 分配内存资源
       page = memoryManager.tungstenMemoryAllocator().allocate(acquired);
     } catch (OutOfMemoryError e) {
       logger.warn("Failed to allocate a page ({} bytes), try again.", acquired);

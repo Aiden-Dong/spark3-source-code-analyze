@@ -45,61 +45,47 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 
 /**
- * A specialized RecordReader that reads into InternalRows or ColumnarBatches directly using the
- * Parquet column APIs. This is somewhat based on parquet-mr's ColumnReader.
+ * 一个专门的 RecordReader，使用 Parquet 列 API 直接读取到 InternalRows 或 ColumnarBatches。
+ * 这在某种程度上基于 parquet-mr 的 ColumnReader。
  *
- * TODO: decimal requiring more than 8 bytes, INT96. Schema mismatch.
- * All of these can be handled efficiently and easily with codegen.
+ * TODO: 处理需要超过 8 字节的十进制数，INT96 类型，模式不匹配等问题。
+ * 这些都可以通过代码生成高效且轻松地处理。
  *
- * This class can either return InternalRows or ColumnarBatches. With whole stage codegen
- * enabled, this class returns ColumnarBatches which offers significant performance gains.
- * TODO: make this always return ColumnarBatches.
+ * 该类可以返回 InternalRows 或 ColumnarBatches。如果启用了整个阶段的代码生成，
+ * 该类会返回 ColumnarBatches，从而显著提高性能。
+ * TODO: 使该类始终返回 ColumnarBatches。
  */
 public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBase<Object> {
 
-  // The capacity of vectorized batch.
+  // 向量化批次的容量。
   private int capacity;
 
   /**
    * Batch of rows that we assemble and the current index we've returned. Every time this
    * batch is used up (batchIdx == numBatched), we populated the batch.
+   * 我们组装的行批次以及当前返回的索引。每次使用完这个批次（batchIdx == numBatched）时，我们会填充该批次。
    */
-  private int batchIdx = 0;
-  private int numBatched = 0;
+  private int batchIdx = 0;     // 当前正在读取的批次内偏移
+  private int numBatched = 0;   // 当前批次读取的总的数据量
 
-  /**
-   * Encapsulate writable column vectors with other Parquet related info such as
-   * repetition / definition levels.
-   */
+  // 封装可写的列向量以及其他与 Parquet 相关的信息，如重复级别/定义级别。
+
   private ParquetColumnVector[] columnVectors;
 
-  /**
-   * The number of rows that have been returned.
-   */
-  private long rowsReturned;
+  private long rowsReturned;                   // 标识已经消费的行数
+  private long totalCountLoadedSoFar = 0;      // 标识已经从 parquet 读取出来的行数(包含未消费的)
 
-  /**
-   * The number of rows that have been reading, including the current in flight row group.
-   */
-  private long totalCountLoadedSoFar = 0;
-
-  /**
-   * For each leaf column, if it is in the set, it means the column is missing in the file and
-   * we'll instead return NULLs.
-   */
+  // 对于每个叶子列，如果它在集合中，意味着该列在文件中缺失，我们将返回 NULL 值。
   private Set<ParquetColumn> missingColumns;
 
-  /**
-   * The timezone that timestamp INT96 values should be converted to. Null if no conversion. Here to
-   * workaround incompatibilities between different engines when writing timestamp values.
-   */
+  // 时间戳 INT96 值应转换为的时区。如果不进行转换，则为 null。
+  // 此项用于解决不同引擎在写入时间戳值时的兼容性问题。
   private final ZoneId convertTz;
 
-  /**
-   * The mode of rebasing date/timestamp from Julian to Proleptic Gregorian calendar.
-   */
+  // 将日期/时间戳从儒略历重基到公历（Proleptic Gregorian）的模式。
   private final String datetimeRebaseMode;
-  // The time zone Id in which rebasing of date/timestamp is performed
+
+  // 进行日期/时间戳重基操作的时区 ID。
   private final String datetimeRebaseTz;
 
   /**
@@ -110,18 +96,15 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
   private final String int96RebaseTz;
 
   /**
-   * columnBatch object that is used for batch decoding. This is created on first use and triggers
-   * batched decoding. It is not valid to interleave calls to the batched interface with the row
-   * by row RecordReader APIs.
-   * This is only enabled with additional flags for development. This is still a work in progress
-   * and currently unsupported cases will fail with potentially difficult to diagnose errors.
-   * This should be only turned on for development to work on this feature.
+   * 用于批量解码的 columnBatch 对象。它在第一次使用时创建，并触发批量解码。
+   * 不允许在批量接口与逐行 RecordReader API 之间交替调用。
+   * 只有在开发阶段通过额外标志启用此功能。目前仍在进行中，当前不支持的情况将导致难以诊断的错误。
+   * 该功能应仅在开发时启用，以便开发此特性。
    *
-   * When this is set, the code will branch early on in the RecordReader APIs. There is no shared
-   * code between the path that uses the MR decoders and the vectorized ones.
+   * 设置此项时，代码将在 RecordReader API 中早期分支。使用 MR 解码器和向量化解码器的路径之间没有共享代码。
    *
-   * TODOs:
-   *  - Implement v2 page formats (just make sure we create the correct decoders).
+   * TODO：
+   *  - 实现 v2 页面格式（确保创建正确的解码器）。
    */
   private ColumnarBatch columnarBatch;
 
@@ -211,10 +194,10 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
 
     if (returnColumnarBatch) return nextBatch();
 
-    if (batchIdx >= numBatched) {
+    if (batchIdx >= numBatched) {   // 标识已经读取完当前批次
       if (!nextBatch()) return false;
     }
-    ++batchIdx;
+    ++batchIdx;  // 更新索引位置
     return true;
   }
 
@@ -297,18 +280,21 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     returnColumnarBatch = true;
   }
 
-  /**
-   * Advances to the next batch of rows. Returns false if there are no more.
-   */
+  // 前进到下一批行。如果没有更多行，则返回 false。
   public boolean nextBatch() throws IOException {
+    // 新的 batch ， 需要初始化数据集
     for (ParquetColumnVector vector : columnVectors) {
       vector.reset();
     }
     columnarBatch.setNumRows(0);
+
+    // 标识消费的记录数已经达到了当前文件的总记录数
     if (rowsReturned >= totalRowCount) return false;
+
     checkEndOfRowGroup();
 
     int num = (int) Math.min(capacity, totalCountLoadedSoFar - rowsReturned);
+
     for (ParquetColumnVector cv : columnVectors) {
       for (ParquetColumnVector leafCv : cv.getLeaves()) {
         VectorizedColumnReader columnReader = leafCv.getColumnReader();
@@ -384,15 +370,21 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
   }
 
   private void checkEndOfRowGroup() throws IOException {
+    // 标识还有数据没有消费完
     if (rowsReturned != totalCountLoadedSoFar) return;
+
     PageReadStore pages = reader.readNextRowGroup();
+
     if (pages == null) {
       throw new IOException("expecting more rows but reached last block. Read "
           + rowsReturned + " out of " + totalRowCount);
     }
+
     for (ParquetColumnVector cv : columnVectors) {
       initColumnReader(pages, cv);
     }
+
+    // 当前page 的总记录数
     totalCountLoadedSoFar += pages.getRowCount();
   }
 
@@ -401,8 +393,13 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
       if (cv.getColumn().isPrimitive()) {
         ParquetColumn column = cv.getColumn();
         VectorizedColumnReader reader = new VectorizedColumnReader(
-          column.descriptor().get(), column.required(), pages, convertTz, datetimeRebaseMode,
-          datetimeRebaseTz, int96RebaseMode, int96RebaseTz, writerVersion);
+                column.descriptor().get(),
+                column.required(),
+                pages,
+                convertTz,
+                datetimeRebaseMode,
+                datetimeRebaseTz,
+                int96RebaseMode, int96RebaseTz, writerVersion);
         cv.setColumnReader(reader);
       } else {
         // Not in missing columns and is a complex type: this must be a struct

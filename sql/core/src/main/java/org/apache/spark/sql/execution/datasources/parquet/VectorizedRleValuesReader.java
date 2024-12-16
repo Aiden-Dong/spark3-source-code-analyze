@@ -205,35 +205,43 @@ public final class VectorizedRleValuesReader extends ValuesReader
       VectorizedValuesReader valueReader,
       ParquetVectorUpdater updater) {
 
-    long rowId = state.rowId;
-    int leftInBatch = state.rowsToReadInBatch;
-    int leftInPage = state.valuesToReadInPage;
+    long rowId = state.rowId;                   // 当前在读 row 的索引
+
+    int leftInBatch = state.rowsToReadInBatch;  // 当前批次要读取的数据量
+    int leftInPage = state.valuesToReadInPage;  // 当前Page的可读数据量
 
     while (leftInBatch > 0 && leftInPage > 0) {
-      if (currentCount == 0 && !readNextGroup()) break;
+      if (currentCount == 0 && !readNextGroup()) break;   // 标识 page 中没有数据了
+
+      // 读取当前批读的最小可读数据
       int n = Math.min(leftInBatch, Math.min(leftInPage, this.currentCount));
 
+      // 获取当前数据范围的起始位置
       long rangeStart = state.currentRangeStart();
+      // 获取当前数据范围的结束位置
       long rangeEnd = state.currentRangeEnd();
 
-      if (rowId + n < rangeStart) {
+
+      if (rowId + n < rangeStart) {   // 标识当前数据偏移 n 个后仍然是无效数据
         skipValues(n, state, valueReader, updater);
         rowId += n;
         leftInPage -= n;
-      } else if (rowId > rangeEnd) {
+      } else if (rowId > rangeEnd) {   // 标识当前索引无效， 更新下一个索引位置
         state.nextRange();
       } else {
-        // The range [rowId, rowId + n) overlaps with the current row range in state
-        long start = Math.max(rangeStart, rowId);
-        long end = Math.min(rangeEnd, rowId + n - 1);
+        // 重新定义当前批次的数据读取范围
+        long start = Math.max(rangeStart, rowId);       // 数据读取的有效开始位置
+        long end = Math.min(rangeEnd, rowId + n - 1);   // 数据读取的有效结束位置
 
         // Skip the part [rowId, start)
-        int toSkip = (int) (start - rowId);
+        int toSkip = (int) (start - rowId);  // 标识  rowId < rangeStart, 有无效数据
         if (toSkip > 0) {
-          skipValues(toSkip, state, valueReader, updater);
+          skipValues(toSkip, state, valueReader, updater);    // 跳过无效数据
           rowId += toSkip;
           leftInPage -= toSkip;
         }
+
+        // 接下来是有效数据读取
 
         // Read the part [start, end]
         n = (int) (end - start + 1);

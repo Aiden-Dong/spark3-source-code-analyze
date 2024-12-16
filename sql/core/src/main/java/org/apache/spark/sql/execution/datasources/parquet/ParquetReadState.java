@@ -26,78 +26,93 @@ import java.util.PrimitiveIterator;
 
 /**
  * Helper class to store intermediate state while reading a Parquet column chunk.
+ * 辅助类，用于在读取 Parquet 列块时存储中间状态。
  */
 final class ParquetReadState {
-  /** A special row range used when there is no row indexes (hence all rows must be included) */
+  /**
+   *  A special row range used when there is no row indexes (hence all rows must be included)
+   *  当没有RowIndex时使用的特殊行范围（因此必须包含所有行）。
+   * */
   private static final RowRange MAX_ROW_RANGE = new RowRange(Long.MIN_VALUE, Long.MAX_VALUE);
 
   /**
    * A special row range used when the row indexes are present AND all the row ranges have been
    * processed. This serves as a sentinel at the end indicating that all rows come after the last
    * row range should be skipped.
+   * 当行索引存在且所有行范围都已处理时使用的特殊行范围。
+   * 它作为一个哨兵值，表示在最后一个行范围之后的所有行应被跳过。
    */
   private static final RowRange END_ROW_RANGE = new RowRange(Long.MAX_VALUE, Long.MIN_VALUE);
 
-  /** Iterator over all row ranges, only not-null if column index is present */
+  // 当前 CloumnChunk 过滤后，所有有效的数据范围
   private final Iterator<RowRange> rowRanges;
 
-  /** The current row range */
+  // 指向当前在读的数据范围
   private RowRange currentRange;
 
-  /** Maximum repetition level for the Parquet column */
+
+  long rowId;                      // 当前要读取的 row 的索引号
+  int valuesToReadInPage;          // 返回当前 page的剩余可读数据
+  int rowsToReadInBatch;           // 当前批次要读取的数据量
+
+  /**
+   * Parquet 列的最大重复级别。
+   * */
   final int maxRepetitionLevel;
 
-  /** Maximum definition level for the Parquet column */
+  /** Parquet 列的最大定义级别。 */
   final int maxDefinitionLevel;
 
-  /** Whether this column is required */
+  /** 该列是否为必填列。 */
   final boolean isRequired;
 
-  /** The current index over all rows within the column chunk. This is used to check if the
-   * current row should be skipped by comparing against the row ranges. */
-  long rowId;
-
-  /** The offset in the current batch to put the next value in value vector */
-  int valueOffset;
-
-  /** The offset in the current batch to put the next value in repetition & definition vector */
-  int levelOffset;
-
-  /** The remaining number of values to read in the current page */
-  int valuesToReadInPage;
-
-  /** The remaining number of rows to read in the current batch */
-  int rowsToReadInBatch;
 
 
-  /* The following fields are only used when reading repeated values */
+  int valueOffset;     // 当前读取的batch 的偏移量
 
-  /** When processing repeated values, whether we've found the beginning of the first list after the
-   *  current batch. */
+  int levelOffset;    // 当前要读取的level 偏移量
+
+
+
+
+
+  /* The following fields are only used when reading repeated values 以下字段仅在读取重复值时使用。 */
+
+  /**
+   * When processing repeated values,
+   * whether we've found the beginning of the first list after the current batch.
+   *
+   * 在处理重复值时，指示我们是否在当前批次后找到了第一个列表的开始。
+   *  */
   boolean lastListCompleted;
 
-  /** When processing repeated types, the number of accumulated definition levels to process */
+  /**
+   * When processing repeated types, the number of accumulated definition levels to process
+   * 在处理重复类型时，指示需要处理的累积定义级别的数量。
+   *  */
   int numBatchedDefLevels;
 
-  /** When processing repeated types, whether we should skip the current batch of definition
-   * levels. */
+  /**
+   * When processing repeated types, whether we should skip the current batch of definition
+   * levels.
+   * */
   boolean shouldSkip;
 
-  ParquetReadState(
-      ColumnDescriptor descriptor,
-      boolean isRequired,
-      PrimitiveIterator.OfLong rowIndexes) {
+  ParquetReadState(ColumnDescriptor descriptor, boolean isRequired, PrimitiveIterator.OfLong rowIndexes) {
+
     this.maxRepetitionLevel = descriptor.getMaxRepetitionLevel();
     this.maxDefinitionLevel = descriptor.getMaxDefinitionLevel();
     this.isRequired = isRequired;
+
     this.rowRanges = constructRanges(rowIndexes);
+
     nextRange();
   }
 
   /**
-   * Construct a list of row ranges from the given `rowIndexes`. For example, suppose the
-   * `rowIndexes` are `[0, 1, 2, 4, 5, 7, 8, 9]`, it will be converted into 3 row ranges:
-   * `[0-2], [4-5], [7-9]`.
+   * Construct a list of row ranges from the given `rowIndexes`.
+   * For example, suppose the `rowIndexes` are `[0, 1, 2, 4, 5, 7, 8, 9]`,
+   * it will be converted into 3 row ranges: `[0-2], [4-5], [7-9]`.
    */
   private Iterator<RowRange> constructRanges(PrimitiveIterator.OfLong rowIndexes) {
     if (rowIndexes == null) {
@@ -143,7 +158,7 @@ final class ParquetReadState {
    * Must be called at the beginning of reading a new page.
    */
   void resetForNewPage(int totalValuesInPage, long pageFirstRowIndex) {
-    this.valuesToReadInPage = totalValuesInPage;
+    this.valuesToReadInPage = totalValuesInPage;  // 总的行数
     this.rowId = pageFirstRowIndex;
   }
 

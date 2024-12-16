@@ -69,7 +69,7 @@ class QueryExecution(
     }
   }
 
-  // 分析逻辑树
+  // 分析逻辑树- 主要为状态符号填充元信息
   lazy val analyzed: LogicalPlan = executePhase(QueryPlanningTracker.ANALYSIS) {
     // We can't clone `logical` here, which will reset the `_analyzed` flag.
     sparkSession.sessionState.analyzer.executeAndCheck(logical, tracker)
@@ -445,9 +445,10 @@ object QueryExecution {
   }
 
   /**
-   * Transform a [[LogicalPlan]] into a [[SparkPlan]].
+   * 将 [[LogicalPlan]] 转换成 [[SparkPlan]].
    *
-   * Note that the returned physical plan still needs to be prepared for execution.
+   * Note that the returned physical plan still needs to be prepared for execution
+   * 请注意，返回的物理计划仍需准备才能执行.
    */
   def createSparkPlan(
       sparkSession: SparkSession,
@@ -459,7 +460,7 @@ object QueryExecution {
   }
 
   /**
-   * Prepare the [[SparkPlan]] for execution.
+   * 为 [[SparkPlan]] 的执行做准备.
    */
   def prepareExecutedPlan(spark: SparkSession, plan: SparkPlan): SparkPlan = {
     prepareForExecution(preparations(spark, subquery = true), plan)

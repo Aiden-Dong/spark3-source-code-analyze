@@ -62,13 +62,11 @@ private[spark] class UnifiedMemoryManager(
   }
 
   /**
-   * Try to acquire up to `numBytes` of execution memory for the current task and return the
-   * number of bytes obtained, or 0 if none can be allocated.
+   * 尝试为当前任务获取最多 `numBytes` 的执行内存，并返回获得的字节数；如果无法分配，则返回 0。
    *
-   * This call may block until there is enough free memory in some situations, to make sure each
-   * task has a chance to ramp up to at least 1 / 2N of the total memory pool (where N is the # of
-   * active tasks) before it is forced to spill. This can happen if the number of tasks increase
-   * but an older task had a lot of memory already.
+   * 在某些情况下，此调用可能会阻塞，直到有足够的空闲内存，
+   * 以确保每个任务在被迫溢出之前有机会逐步增加到总内存池的至少 1 / 2N（其中 N 是活跃任务的数量）
+   * 。如果任务数量增加，但较旧的任务已经占用了大量内存，则可能会发生这种情况。
    */
   override private[memory] def acquireExecutionMemory(
       numBytes: Long,

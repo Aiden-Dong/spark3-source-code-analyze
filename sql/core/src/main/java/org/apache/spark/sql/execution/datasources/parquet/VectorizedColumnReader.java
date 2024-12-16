@@ -44,60 +44,66 @@ import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.BOOLEAN;
 import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT64;
 
 /**
- * Decoder to return values from a single column.
+ * 用于从单列返回值的解码器。
  */
 public class VectorizedColumnReader {
   /**
-   * The dictionary, if this column has dictionary encoding.
+   * 如果该列使用字典编码，则为其字典。
    */
-  private final Dictionary dictionary;
+  private final Dictionary dictionary;    // 当前page 的字典
 
   /**
-   * If true, the current page is dictionary encoded.
+   * 如果为 true，则当前页使用字典编码。
    */
-  private boolean isCurrentPageDictionaryEncoded;
+  private boolean isCurrentPageDictionaryEncoded;   // 使用字典编码
 
   /**
-   * Value readers.
+   * 值读取器。
    */
   private ValuesReader dataColumn;
 
   /**
-   * Vectorized RLE decoder for definition levels
+   * 用于定义级别的向量化 RLE 解码器。
    */
   private VectorizedRleValuesReader defColumn;
 
   /**
-   * Vectorized RLE decoder for repetition levels
+   * 用于重复级别的向量化 RLE 解码器。
    */
   private VectorizedRleValuesReader repColumn;
 
   /**
-   * Factory to get type-specific vector updater.
+   * 用于获取特定类型向量更新器的工厂。
    */
   private final ParquetVectorUpdaterFactory updaterFactory;
 
+
+
   /**
    * Helper struct to track intermediate states while reading Parquet pages in the column chunk.
+   * 用于在读取列块中的 Parquet 页面时跟踪中间状态的辅助结构体。
    */
   private final ParquetReadState readState;
 
   /**
    * The index for the first row in the current page, among all rows across all pages in the
    * column chunk for this reader. If there is no column index, the value is 0.
+   *
+   * 当前页中第一个行的索引（相对于此读取器的列块中所有页的所有行）。
+   * 如果没有列索引，则该值为 0。
    */
   private long pageFirstRowIndex;
 
-  private final PageReader pageReader;
-  private final ColumnDescriptor descriptor;
+  private final PageReader pageReader;               //  page 级别
+  private final ColumnDescriptor descriptor;         // 列上下文信息
   private final LogicalTypeAnnotation logicalTypeAnnotation;
   private final String datetimeRebaseMode;
   private final ParsedVersion writerVersion;
 
   public VectorizedColumnReader(
-      ColumnDescriptor descriptor,
+      ColumnDescriptor descriptor,    // 当前列级别的
       boolean isRequired,
-      PageReadStore pageReadStore,
+      PageReadStore pageReadStore,    // page 级别
       ZoneId convertTz,
       String datetimeRebaseMode,
       String datetimeRebaseTz,
@@ -106,8 +112,9 @@ public class VectorizedColumnReader {
       ParsedVersion writerVersion) throws IOException {
     this.descriptor = descriptor;
     this.pageReader = pageReadStore.getPageReader(descriptor);
-    this.readState = new ParquetReadState(descriptor, isRequired,
-      pageReadStore.getRowIndexes().orElse(null));
+
+    this.readState = new ParquetReadState(descriptor, isRequired, pageReadStore.getRowIndexes().orElse(null));
+
     this.logicalTypeAnnotation = descriptor.getPrimitiveType().getLogicalTypeAnnotation();
     this.updaterFactory = new ParquetVectorUpdaterFactory(
       logicalTypeAnnotation,
@@ -117,7 +124,9 @@ public class VectorizedColumnReader {
       int96RebaseMode,
       int96RebaseTz);
 
-    DictionaryPage dictionaryPage = pageReader.readDictionaryPage();
+    // ========== 初始化字典结构 ================
+    DictionaryPage dictionaryPage = pageReader.readDictionaryPage();  // 读取当前 page 的 字典编码
+
     if (dictionaryPage != null) {
       try {
         this.dictionary = dictionaryPage.getEncoding().initDictionary(descriptor, dictionaryPage);
@@ -129,7 +138,8 @@ public class VectorizedColumnReader {
       this.dictionary = null;
       this.isCurrentPageDictionaryEncoded = false;
     }
-    if (pageReader.getTotalValueCount() == 0) {
+
+    if (pageReader.getTotalValueCount() == 0) {  // 当前 pagereader 的 总舒俱来快过年
       throw new IOException("totalValueCount == 0");
     }
     assert "LEGACY".equals(datetimeRebaseMode) || "EXCEPTION".equals(datetimeRebaseMode) ||
@@ -166,44 +176,52 @@ public class VectorizedColumnReader {
   /**
    * Reads `total` rows from this columnReader into column.
    */
-  void readBatch(
-      int total,
-      WritableColumnVector column,
-      WritableColumnVector repetitionLevels,
-      WritableColumnVector definitionLevels) throws IOException {
+  void readBatch(int total,
+                 WritableColumnVector column,
+                 WritableColumnVector repetitionLevels,
+                 WritableColumnVector definitionLevels) throws IOException {
+
     WritableColumnVector dictionaryIds = null;
+
     ParquetVectorUpdater updater = updaterFactory.getUpdater(descriptor, column.dataType());
 
     if (dictionary != null) {
       // SPARK-16334: We only maintain a single dictionary per row batch, so that it can be used to
       // decode all previous dictionary encoded pages if we ever encounter a non-dictionary encoded
       // page.
-      dictionaryIds = column.reserveDictionaryIds(total);
+      dictionaryIds = column.reserveDictionaryIds(total);  // 重置字典
     }
-    readState.resetForNewBatch(total);
-    while (readState.rowsToReadInBatch > 0 || !readState.lastListCompleted) {
+
+    readState.resetForNewBatch(total);   // 读状态初始化
+
+    while (readState.rowsToReadInBatch > 0 || !readState.lastListCompleted) {  // 标识当前批次还有数据要读取
+
+      // 标识当前列中没有数据了, 需要读取一个新的 page 进来
       if (readState.valuesToReadInPage == 0) {
         int pageValueCount = readPage();
+        // 返回当前 page 的数据量
         if (pageValueCount < 0) {
           // we've read all the pages; this could happen when we're reading a repeated list and we
           // don't know where the list will end until we've seen all the pages.
           break;
         }
+
         readState.resetForNewPage(pageValueCount, pageFirstRowIndex);
       }
-      PrimitiveType.PrimitiveTypeName typeName =
-          descriptor.getPrimitiveType().getPrimitiveTypeName();
+
+      PrimitiveType.PrimitiveTypeName typeName = descriptor.getPrimitiveType().getPrimitiveTypeName();
+
       if (isCurrentPageDictionaryEncoded) {
         // Save starting offset in case we need to decode dictionary IDs.
+        // // 保存起始偏移量，以防需要解码字典 ID
         int startOffset = readState.valueOffset;
-        // Save starting row index so we can check if we need to eagerly decode dict ids later
+        // 保存起始行索引，以便稍后检查是否需要提前解码字典 ID
         long startRowId = readState.rowId;
 
         // Read and decode dictionary ids.
-        if (readState.maxRepetitionLevel == 0) {
-          defColumn.readIntegers(readState, dictionaryIds, column, definitionLevels,
-            (VectorizedValuesReader) dataColumn);
-        } else {
+        if (readState.maxRepetitionLevel == 0) { // 标识非重复读
+          defColumn.readIntegers(readState, dictionaryIds, column, definitionLevels, (VectorizedValuesReader) dataColumn);
+        } else {                                 // 标识这是一个重复读
           repColumn.readIntegersRepeated(readState, repetitionLevels, defColumn, definitionLevels,
             dictionaryIds, column, (VectorizedValuesReader) dataColumn);
         }

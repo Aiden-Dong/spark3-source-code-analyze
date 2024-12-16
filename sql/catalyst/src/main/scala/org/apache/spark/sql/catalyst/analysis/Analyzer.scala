@@ -284,7 +284,7 @@ class Analyzer(override val catalogManager: CatalogManager)
       new ResolveCatalogs(catalogManager) ::
       ResolveUserSpecifiedColumns ::
       ResolveInsertInto ::
-      ResolveRelations ::    // 表解析
+      ResolveRelations ::       // 表解析， 将语句中表占位符处理掉，替换为具体的带有表元信息的结构
       ResolvePartitionSpec ::
       ResolveFieldNameAndPosition ::
       AddMetadataColumns ::
@@ -890,17 +890,21 @@ class Analyzer(override val catalogManager: CatalogManager)
     }
   }
 
-  // If we are resolving database objects (relations, functions, etc.) insides views, we may need to
-  // expand single or multi-part identifiers with the current catalog and namespace of when the
-  // view was created.
+  // 给予表占位符完善信息， 比如 :
+  //      -> tableName -> [defaultCatalog,defaultNamespace,tableName]
+  //      -> [namespace,tableName] -> [defaultCatalog, namespace, tableName]
+
   private def expandIdentifier(nameParts: Seq[String]): Seq[String] = {
     if (!isResolvingView || isReferredTempViewName(nameParts)) return nameParts
 
     if (nameParts.length == 1) {
+      // 如果只有表名， 则给予默认的 catalog + namespace
       AnalysisContext.get.catalogAndNamespace :+ nameParts.head
     } else if (catalogManager.isCatalogRegistered(nameParts.head)) {
+      // 如果提供了 catalog
       nameParts
     } else {
+      // 否则给予默认的 catalog
       AnalysisContext.get.catalogAndNamespace.head +: nameParts
     }
   }
@@ -979,15 +983,16 @@ class Analyzer(override val catalogManager: CatalogManager)
   }
 
   /**
+   * 用目录中的具体关系替换未解决的关系（表和视图）。
    * Replaces unresolved relations (tables and views) with concrete relations from the catalog.
    */
   object ResolveRelations extends Rule[LogicalPlan] {
-    // The current catalog and namespace may be different from when the view was created, we must
-    // resolve the view logical plan here, with the catalog and namespace stored in view metadata.
-    // This is done by keeping the catalog and namespace in `AnalysisContext`, and analyzer will
-    // look at `AnalysisContext.catalogAndNamespace` when resolving relations with single-part name.
-    // If `AnalysisContext.catalogAndNamespace` is non-empty, analyzer will expand single-part names
-    // with it, instead of current catalog and namespace.
+    // 当前的目录和命名空间可能与视图创建时不同，我们必须在此处解析视图的逻辑计划，
+    // 使用存储在视图元数据中的目录和命名空间。
+    // 通过在 `AnalysisContext` 中保持目录和命名空间来实现这一点，
+    // 分析器在解析单部分名称的关系时会查看 `AnalysisContext.catalogAndNamespace`。
+    // 如果 `AnalysisContext.catalogAndNamespace` 非空，分析器将使用它来扩展单部分名称，
+    // 而不是使用当前的目录和命名空间。
     private def resolveViews(plan: LogicalPlan): LogicalPlan = plan match {
       // The view's child should be a logical plan parsed from the `desc.viewText`, the variable
       // `viewText` should be defined, or else we throw an error on the generation of the View
@@ -1187,7 +1192,10 @@ class Analyzer(override val catalogManager: CatalogManager)
     private def lookupRelation(
         u: UnresolvedRelation,
         timeTravelSpec: Option[TimeTravelSpec] = None): Option[LogicalPlan] = {
+
+      // 优先从当前缓存信息中取出 表信息
       lookupTempView(u.multipartIdentifier, u.isStreaming, timeTravelSpec.isDefined).orElse {
+
         expandIdentifier(u.multipartIdentifier) match {
           case CatalogAndIdentifier(catalog, ident) =>              // 解析 catalog
             val key = catalog.name +: ident.namespace :+ ident.name

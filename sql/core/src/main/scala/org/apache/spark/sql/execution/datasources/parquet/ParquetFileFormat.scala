@@ -197,41 +197,28 @@ class ParquetFileFormat
     true
   }
 
+  // 从 parquet 文件中读取数据
   override def buildReaderWithPartitionValues(
       sparkSession: SparkSession,
-      dataSchema: StructType,
+      dataSchema: StructType,        // 数据类型
       partitionSchema: StructType,
       requiredSchema: StructType,
-      filters: Seq[Filter],
+      filters: Seq[Filter],           // 过滤条件
       options: Map[String, String],
       hadoopConf: Configuration): (PartitionedFile) => Iterator[InternalRow] = {
+
     hadoopConf.set(ParquetInputFormat.READ_SUPPORT_CLASS, classOf[ParquetReadSupport].getName)
-    hadoopConf.set(
-      ParquetReadSupport.SPARK_ROW_REQUESTED_SCHEMA,
-      requiredSchema.json)
-    hadoopConf.set(
-      ParquetWriteSupport.SPARK_ROW_SCHEMA,
-      requiredSchema.json)
-    hadoopConf.set(
-      SQLConf.SESSION_LOCAL_TIMEZONE.key,
-      sparkSession.sessionState.conf.sessionLocalTimeZone)
-    hadoopConf.setBoolean(
-      SQLConf.NESTED_SCHEMA_PRUNING_ENABLED.key,
-      sparkSession.sessionState.conf.nestedSchemaPruningEnabled)
-    hadoopConf.setBoolean(
-      SQLConf.CASE_SENSITIVE.key,
-      sparkSession.sessionState.conf.caseSensitiveAnalysis)
+    hadoopConf.set(ParquetReadSupport.SPARK_ROW_REQUESTED_SCHEMA, requiredSchema.json)
+    hadoopConf.set(ParquetWriteSupport.SPARK_ROW_SCHEMA, requiredSchema.json)
+    hadoopConf.set( SQLConf.SESSION_LOCAL_TIMEZONE.key, sparkSession.sessionState.conf.sessionLocalTimeZone)
+    hadoopConf.setBoolean( SQLConf.NESTED_SCHEMA_PRUNING_ENABLED.key, sparkSession.sessionState.conf.nestedSchemaPruningEnabled)
+    hadoopConf.setBoolean( SQLConf.CASE_SENSITIVE.key, sparkSession.sessionState.conf.caseSensitiveAnalysis)
 
     // Sets flags for `ParquetToSparkSchemaConverter`
-    hadoopConf.setBoolean(
-      SQLConf.PARQUET_BINARY_AS_STRING.key,
-      sparkSession.sessionState.conf.isParquetBinaryAsString)
-    hadoopConf.setBoolean(
-      SQLConf.PARQUET_INT96_AS_TIMESTAMP.key,
-      sparkSession.sessionState.conf.isParquetINT96AsTimestamp)
+    hadoopConf.setBoolean( SQLConf.PARQUET_BINARY_AS_STRING.key, sparkSession.sessionState.conf.isParquetBinaryAsString)
+    hadoopConf.setBoolean( SQLConf.PARQUET_INT96_AS_TIMESTAMP.key, sparkSession.sessionState.conf.isParquetINT96AsTimestamp)
 
-    val broadcastedHadoopConf =
-      sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
+    val broadcastedHadoopConf =  sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
 
     // TODO: if you move this into the closure it reverts to the default values.
     // If true, enable using the custom RecordReader for parquet. This only works for
@@ -239,8 +226,7 @@ class ParquetFileFormat
     val resultSchema = StructType(partitionSchema.fields ++ requiredSchema.fields)
     val sqlConf = sparkSession.sessionState.conf
     val enableOffHeapColumnVector = sqlConf.offHeapColumnVectorEnabled
-    val enableVectorizedReader: Boolean =
-      ParquetUtils.isBatchReadSupportedForSchema(sqlConf, resultSchema)
+    val enableVectorizedReader: Boolean = ParquetUtils.isBatchReadSupportedForSchema(sqlConf, resultSchema)
     val enableRecordFilter: Boolean = sqlConf.parquetRecordFilterEnabled
     val timestampConversion: Boolean = sqlConf.isParquetINT96TimestampConversion
     val capacity = sqlConf.parquetVectorizedReaderBatchSize
@@ -260,19 +246,25 @@ class ParquetFileFormat
     (file: PartitionedFile) => {
       assert(file.partitionValues.numFields == partitionSchema.size)
 
-      val filePath = new Path(new URI(file.filePath))
+      val filePath = new Path(new URI(file.filePath))   // parquet 文件地址
       val split = new FileSplit(filePath, file.start, file.length, Array.empty[String])
 
       val sharedConf = broadcastedHadoopConf.value.value
 
-      lazy val footerFileMetaData =
-        ParquetFooterReader.readFooter(sharedConf, filePath, SKIP_ROW_GROUPS).getFileMetaData
+      // 读取 Footer 信息
+      lazy val footerFileMetaData = ParquetFooterReader.readFooter(sharedConf, filePath, SKIP_ROW_GROUPS).getFileMetaData
+
       val datetimeRebaseSpec = DataSourceUtils.datetimeRebaseSpec(
         footerFileMetaData.getKeyValueMetaData.get,
         datetimeRebaseModeInRead)
-      // Try to push down filters when filter push-down is enabled.
+
+
+      // 创建过滤器
       val pushed = if (enableParquetFilterPushDown) {
+
         val parquetSchema = footerFileMetaData.getSchema
+
+        // 过滤器
         val parquetFilters = new ParquetFilters(
           parquetSchema,
           pushDownDate,
@@ -282,12 +274,13 @@ class ParquetFileFormat
           pushDownInFilterThreshold,
           isCaseSensitive,
           datetimeRebaseSpec)
+
         filters
           // Collects all converted Parquet filter predicates. Notice that not all predicates can be
           // converted (`ParquetFilters.createFilter` returns an `Option`). That's why a `flatMap`
           // is used here.
           .flatMap(parquetFilters.createFilter(_))
-          .reduceOption(FilterApi.and)
+          .reduceOption(FilterApi.and)  // 创建过滤类型
       } else {
         None
       }
@@ -315,9 +308,10 @@ class ParquetFileFormat
       val hadoopAttemptContext =
         new TaskAttemptContextImpl(broadcastedHadoopConf.value.value, attemptId)
 
-      // Try to push down filters when filter push-down is enabled.
-      // Notice: This push-down is RowGroups level, not individual records.
+      // 尝试在启用过滤器下推时下推过滤器。
+      // 注意：此下推是行组级别，而不是单个记录级别。
       if (pushed.isDefined) {
+
         ParquetInputFormat.setFilterPredicate(hadoopAttemptContext.getConfiguration, pushed.get)
       }
       val taskContext = Option(TaskContext.get())
