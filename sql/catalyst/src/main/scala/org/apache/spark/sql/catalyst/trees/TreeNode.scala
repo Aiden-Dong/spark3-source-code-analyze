@@ -287,8 +287,8 @@ abstract class TreeNode[BaseType <: TreeNode[BaseType]] extends Product with Tre
   }
 
   /**
-   * Returns a Seq of the children of this node.
-   * Children should not change. Immutability required for containsChild optimization
+   * 返回此节点的子节点序列。 子节点不应改变。
+   * 为了 `containsChild` 优化，要求不可变性。
    */
   def children: Seq[BaseType]
 

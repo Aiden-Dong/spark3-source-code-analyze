@@ -53,6 +53,7 @@ abstract class SparkStrategy extends GenericStrategy[SparkPlan] {
   override protected def planLater(plan: LogicalPlan): SparkPlan = PlanLater(plan)
 }
 
+// SparkPlan 占位符
 case class PlanLater(plan: LogicalPlan) extends LeafExecNode {
 
   override def output: Seq[Attribute] = plan.output

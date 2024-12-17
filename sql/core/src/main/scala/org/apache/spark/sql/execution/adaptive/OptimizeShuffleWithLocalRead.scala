@@ -25,13 +25,10 @@ import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.internal.SQLConf
 
 /**
- * A rule to optimize the shuffle read to local read iff no additional shuffles
- * will be introduced:
- * 1. if the input plan is a shuffle, add local read directly as we can never introduce
- * extra shuffles in this case.
- * 2. otherwise, add local read to the probe side of broadcast hash join and
- * then run `EnsureRequirements` to check whether additional shuffle introduced.
- * If introduced, we will revert all the local reads.
+ * 一个规则，用于优化 shuffle 读取为本地读取（仅在不引入External shuffle 的情况下）：
+ * 1. 如果输入计划是 shuffle，则直接添加本地读取，因为在这种情况下我们永远不会引入额外的 shuffle。
+ * 2. 否则，将本地读取添加到广播哈希连接的探测端，然后运行 `EnsureRequirements` 来检查是否引入了额外的 shuffle。
+ * 如果引入了额外的 shuffle，我们将恢复所有本地读取。
  */
 object OptimizeShuffleWithLocalRead extends AQEShuffleReadRule {
 

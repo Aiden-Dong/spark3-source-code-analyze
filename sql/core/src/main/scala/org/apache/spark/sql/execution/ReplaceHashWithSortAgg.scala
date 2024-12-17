@@ -24,17 +24,16 @@ import org.apache.spark.sql.execution.aggregate.{BaseAggregateExec, HashAggregat
 import org.apache.spark.sql.internal.SQLConf
 
 /**
- * Replace hash-based aggregate with sort aggregate in the spark plan if:
+ * 如果满足以下条件，将在 Spark 计划中用排序聚合替换基于哈希的聚合：
  *
- * 1. The plan is a pair of partial and final [[HashAggregateExec]] or [[ObjectHashAggregateExec]],
- *    and the child of partial aggregate satisfies the sort order of corresponding
- *    [[SortAggregateExec]].
- * or
- * 2. The plan is a [[HashAggregateExec]] or [[ObjectHashAggregateExec]], and the child satisfies
- *    the sort order of corresponding [[SortAggregateExec]].
+ * 1. 计划是一个部分和最终 [[HashAggregateExec]] 或 [[ObjectHashAggregateExec]] 的组合，
+ *    并且部分聚合的子节点满足对应 [[SortAggregateExec]] 的排序顺序。
+ * 或者
+ * 2. 计划是一个 [[HashAggregateExec]] 或 [[ObjectHashAggregateExec]]，
+ *    并且子节点满足对应 [[SortAggregateExec]] 的排序顺序。
  *
- * Examples:
- * 1. aggregate after join:
+ * 示例：
+ * 1. 连接后的聚合：
  *
  *  HashAggregate(t1.i, SUM, final)
  *               |                         SortAggregate(t1.i, SUM, complete)
@@ -42,15 +41,14 @@ import org.apache.spark.sql.internal.SQLConf
  *               |                            SortMergeJoin(t1.i = t2.j)
  *    SortMergeJoin(t1.i = t2.j)
  *
- * 2. aggregate after sort:
+ * 2. 排序后的聚合：
  *
  * HashAggregate(t1.i, SUM, partial)         SortAggregate(t1.i, SUM, partial)
  *               |                     =>                  |
  *           Sort(t1.i)                                Sort(t1.i)
  *
- * Hash-based aggregate can be replaced when its child satisfies the sort order of
- * corresponding sort aggregate. Sort aggregate is faster in the sense that
- * it does not have hashing overhead of hash aggregate.
+ * 当基于哈希的聚合的子节点满足对应排序聚合的排序顺序时，可以用排序聚合替换哈希聚合。
+ * 排序聚合在某种意义上更快，因为它没有哈希聚合的哈希开销。
  */
 object ReplaceHashWithSortAgg extends Rule[SparkPlan] {
   def apply(plan: SparkPlan): SparkPlan = {

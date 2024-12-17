@@ -27,7 +27,7 @@ import org.apache.spark.sql.execution.exchange.BroadcastExchangeExec
 import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, HashedRelationBroadcastMode, HashJoin}
 
 /**
- * A rule to insert dynamic pruning predicates in order to reuse the results of broadcast.
+ * 一个规则，用于插入动态裁剪谓词，以便重用广播的结果。
  */
 case class PlanAdaptiveDynamicPruningFilters(
     rootPlan: AdaptiveSparkPlanExec) extends Rule[SparkPlan] with AdaptiveSparkPlanHelper {

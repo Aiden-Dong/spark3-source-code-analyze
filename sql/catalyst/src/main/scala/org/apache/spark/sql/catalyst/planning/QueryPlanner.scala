@@ -37,35 +37,32 @@ abstract class GenericStrategy[PhysicalPlan <: TreeNode[PhysicalPlan]] extends L
 
   def apply(plan: LogicalPlan): Seq[PhysicalPlan]
 }
-
 /**
- * Abstract class for transforming [[LogicalPlan]]s into physical plans.
- * Child classes are responsible for specifying a list of [[GenericStrategy]] objects that
- * each of which can return a list of possible physical plan options.
- * If a given strategy is unable to plan all of the remaining operators in the tree,
- * it can call [[GenericStrategy#planLater planLater]], which returns a placeholder
- * object that will be [[collectPlaceholders collected]] and filled in
- * using other available strategies.
+ * 用于将 [[LogicalPlan]] 转换为物理计划的抽象类。
+ * 子类负责指定一组 [[GenericStrategy]] 对象，每个对象可以返回一组可能的物理计划选项。
+ * 如果某个策略无法规划树中所有剩余的操作符，
+ * 它可以调用 [[GenericStrategy#planLater planLater]]，该方法返回一个占位符
+ * 对象，该对象将被 [[collectPlaceholders 收集]] 并使用其他可用策略进行填充。
  *
- * TODO: RIGHT NOW ONLY ONE PLAN IS RETURNED EVER...
- *       PLAN SPACE EXPLORATION WILL BE IMPLEMENTED LATER.
+ * TODO：目前只返回一个计划...
+ *       计划空间探索将在后续实现。
  *
- * @tparam PhysicalPlan The type of physical plan produced by this [[QueryPlanner]]
+ * @tparam PhysicalPlan 由此 [[QueryPlanner]] 生成的物理计划类型
  */
 abstract class QueryPlanner[PhysicalPlan <: TreeNode[PhysicalPlan]] {
   /** A list of execution strategies that can be used by the planner */
   def strategies: Seq[GenericStrategy[PhysicalPlan]]
 
   def plan(plan: LogicalPlan): Iterator[PhysicalPlan] = {
-    // Obviously a lot to do here still...
+    // 显然，这里还有很多工作要做...
 
-    // Collect physical plan candidates.
+    // 收集物理计划候选方案。
     val candidates = strategies.iterator.flatMap(_(plan))
 
-    // The candidates may contain placeholders marked as [[planLater]],
-    // so try to replace them by their child plans.
+    // 候选方案可能包含标记为 [[planLater]] 的占位符，
+    // 因此尝试通过它们的子计划替换这些占位符。
     val plans = candidates.flatMap { candidate =>
-      val placeholders = collectPlaceholders(candidate)
+      val placeholders = collectPlaceholders(candidate)  // 收集占位符
 
       if (placeholders.isEmpty) {
         // Take the candidate as is because it does not contain placeholders.
@@ -75,13 +72,13 @@ abstract class QueryPlanner[PhysicalPlan <: TreeNode[PhysicalPlan]] {
         placeholders.iterator.foldLeft(Iterator(candidate)) {
           case (candidatesWithPlaceholders, (placeholder, logicalPlan)) =>
             // Plan the logical plan for the placeholder.
-            val childPlans = this.plan(logicalPlan)
+            val childPlans = this.plan(logicalPlan)  // 对于占位符重新计算物理计划
 
             candidatesWithPlaceholders.flatMap { candidateWithPlaceholders =>
               childPlans.map { childPlan =>
                 // Replace the placeholder by the child plan
                 candidateWithPlaceholders.transformUp {
-                  case p if p.eq(placeholder) => childPlan
+                  case p if p.eq(placeholder) => childPlan   // 替换占位符计划
                 }
               }
             }

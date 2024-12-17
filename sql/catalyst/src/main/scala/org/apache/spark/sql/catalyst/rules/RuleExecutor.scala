@@ -180,8 +180,7 @@ abstract class RuleExecutor[TreeType <: TreeNode[_]] extends Logging {
   }
 
   /**
-   * Executes the batches of rules defined by the subclass. The batches are executed serially
-   * using the defined execution strategy. Within each batch, rules are also executed serially.
+   * 执行子类定义的规则批处理。批处理按顺序执行，使用定义的执行策略。在每个批处理中，规则也按顺序执行。
    */
   def execute(plan: TreeType): TreeType = {
     var curPlan = plan
@@ -196,29 +195,32 @@ abstract class RuleExecutor[TreeType <: TreeNode[_]] extends Logging {
         this.getClass.getName.stripSuffix("$"))
     }
 
-    // batch 遍历
+    // 遍历所有的 batch 规则
     batches.foreach { batch =>
       val batchStartPlan = curPlan
-      var iteration = 1
+      var iteration = 1          // 初始化遍历次数
       var lastPlan = curPlan
       var continue = true
 
       // Run until fix point (or the max number of iterations as specified in the strategy.
       while (continue) {
-        // 遍历当前 batch 的所有Role
-        // 相当于reduce 操作
+
+        // 将当前 batch 的每个规则应用到 当前的 plan 计划中
+        // 从左到右，应用 Role, 并将应用得到的 plan 结果， 在应用到下一个Rules 中， 相当于执行了 reduce
         curPlan = batch.rules.foldLeft(curPlan) {
           case (plan, rule) =>
             val startTime = System.nanoTime()
             val result = rule(plan)  // 进行分析
             val runTime = System.nanoTime() - startTime
-            val effective = !result.fastEquals(plan)
+
+            val effective = !result.fastEquals(plan)   // 判断是否有效
 
             if (effective) {
               queryExecutionMetrics.incNumEffectiveExecution(rule.ruleName)
               queryExecutionMetrics.incTimeEffectiveExecutionBy(rule.ruleName, runTime)
               planChangeLogger.logRule(rule.ruleName, plan, result)
             }
+
             queryExecutionMetrics.incExecutionTimeBy(rule.ruleName, runTime)
             queryExecutionMetrics.incNumExecution(rule.ruleName)
 

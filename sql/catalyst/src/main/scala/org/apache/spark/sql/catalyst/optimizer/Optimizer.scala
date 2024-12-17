@@ -36,8 +36,7 @@ import org.apache.spark.sql.util.SchemaUtils._
 import org.apache.spark.util.Utils
 
 /**
- * Abstract class all optimizers should inherit of, contains the standard batches (extending
- * Optimizers can override this.
+ * 所有优化器应继承的抽象类，包含标准的批处理（扩展的优化器可以重写此部分）。
  */
 abstract class Optimizer(catalogManager: CatalogManager)
   extends RuleExecutor[LogicalPlan] {
@@ -157,22 +156,18 @@ abstract class Optimizer(catalogManager: CatalogManager)
     //   extra operators between two adjacent Union operators.
     // - Call CombineUnions again in Batch("Operator Optimizations"),
     //   since the other rules might make two separate Unions operators adjacent.
-    Batch("Inline CTE", Once,
-      InlineCTE()) ::
+    Batch("Inline CTE", Once, InlineCTE()) ::
     Batch("Union", Once,
       RemoveNoopOperators,
       CombineUnions,
       RemoveNoopUnion) ::
-    Batch("OptimizeLimitZero", Once,
-      OptimizeLimitZero) ::
+    Batch("OptimizeLimitZero", Once, OptimizeLimitZero) ::
     // Run this once earlier. This might simplify the plan and reduce cost of optimizer.
     // For example, a query such as Filter(LocalRelation) would go through all the heavy
     // optimizer rules that are triggered when there is a filter
     // (e.g. InferFiltersFromConstraints). If we run this batch earlier, the query becomes just
     // LocalRelation and does not trigger many rules.
-    Batch("LocalRelation early", fixedPoint,
-      ConvertToLocalRelation,
-      PropagateEmptyRelation,
+    Batch("LocalRelation early", fixedPoint, ConvertToLocalRelation, PropagateEmptyRelation,
       // PropagateEmptyRelation can change the nullability of an attribute from nullable to
       // non-nullable when an empty relation child of a Union is removed
       UpdateAttributeNullability) ::
@@ -181,8 +176,7 @@ abstract class Optimizer(catalogManager: CatalogManager)
       PullupCorrelatedPredicates) ::
     // Subquery batch applies the optimizer rules recursively. Therefore, it makes no sense
     // to enforce idempotence on it and we change this batch from Once to FixedPoint(1).
-    Batch("Subquery", FixedPoint(1),
-      OptimizeSubqueries) ::
+    Batch("Subquery", FixedPoint(1), OptimizeSubqueries) ::
     Batch("Replace Operators", fixedPoint,
       RewriteExceptAll,
       RewriteIntersectAll,

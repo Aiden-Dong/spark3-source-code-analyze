@@ -179,10 +179,9 @@ object AnalysisContext {
     try f finally { set(originContext) }
   }
 }
-
 /**
- * Provides a logical query plan analyzer, which translates [[UnresolvedAttribute]]s and
- * [[UnresolvedRelation]]s into fully typed objects using information in a [[SessionCatalog]].
+ * 提供逻辑查询计划分析器，使用 [[SessionCatalog]] 中的信息将 [[UnresolvedAttribute]] 和
+ * [[UnresolvedRelation]] 转换为完全类型化的对象。
  */
 class Analyzer(override val catalogManager: CatalogManager)
   extends RuleExecutor[LogicalPlan] with CheckAnalysis with SQLConfHelper {
@@ -256,6 +255,10 @@ class Analyzer(override val catalogManager: CatalogManager)
     TypeCoercion.typeCoercionRules
   }
 
+
+  // FixedPoint (spark.sql.analyzer.maxIterations:100)
+  // Once (1)
+  //
   // 定义分析规则
   override def batches: Seq[Batch] = Seq(
     // spark.sql.analyzer.maxIterations
@@ -269,15 +272,10 @@ class Analyzer(override val catalogManager: CatalogManager)
       WindowsSubstitution,
       EliminateUnions,
       SubstituteUnresolvedOrdinals),
-    Batch("Disable Hints", Once,
-      new ResolveHints.DisableHints),
-    Batch("Hints", fixedPoint,
-      ResolveHints.ResolveJoinStrategyHints,
-      ResolveHints.ResolveCoalesceHints),
-    Batch("Simple Sanity Check", Once,
-      LookupFunctions),
-    Batch("Keep Legacy Outputs", Once,
-      KeepLegacyOutputs),
+    Batch("Disable Hints", Once, new ResolveHints.DisableHints),
+    Batch("Hints", fixedPoint, ResolveHints.ResolveJoinStrategyHints, ResolveHints.ResolveCoalesceHints),
+    Batch("Simple Sanity Check", Once, LookupFunctions),
+    Batch("Keep Legacy Outputs", Once, KeepLegacyOutputs),
     Batch("Resolution", fixedPoint,
       ResolveTableValuedFunctions(v1SessionCatalog) ::
       ResolveNamespace(catalogManager) ::
@@ -325,26 +323,15 @@ class Analyzer(override val catalogManager: CatalogManager)
       Seq(ResolveWithCTE) ++
       extendedResolutionRules : _*),
     Batch("Remove TempResolvedColumn", Once, RemoveTempResolvedColumn),
-    Batch("Apply Char Padding", Once,
-      ApplyCharTypePadding),
-    Batch("Post-Hoc Resolution", Once,
-      Seq(ResolveCommandsWithIfExists) ++
-      postHocResolutionRules: _*),
-    Batch("Remove Unresolved Hints", Once,
-      new ResolveHints.RemoveAllHints),
-    Batch("Nondeterministic", Once,
-      PullOutNondeterministic),
-    Batch("UDF", Once,
-      HandleNullInputsForUDF,
-      ResolveEncodersInUDF),
-    Batch("UpdateNullability", Once,
-      UpdateAttributeNullability),
-    Batch("Subquery", Once,
-      UpdateOuterReferences),
-    Batch("Cleanup", fixedPoint,
-      CleanupAliases),
-    Batch("HandleAnalysisOnlyCommand", Once,
-      HandleAnalysisOnlyCommand)
+    Batch("Apply Char Padding", Once, ApplyCharTypePadding),
+    Batch("Post-Hoc Resolution", Once, Seq(ResolveCommandsWithIfExists) ++ postHocResolutionRules: _*),
+    Batch("Remove Unresolved Hints", Once, new ResolveHints.RemoveAllHints),
+    Batch("Nondeterministic", Once, PullOutNondeterministic),
+    Batch("UDF", Once, HandleNullInputsForUDF, ResolveEncodersInUDF),
+    Batch("UpdateNullability", Once, UpdateAttributeNullability),
+    Batch("Subquery", Once, UpdateOuterReferences),
+    Batch("Cleanup", fixedPoint, CleanupAliases),
+    Batch("HandleAnalysisOnlyCommand", Once, HandleAnalysisOnlyCommand)
   )
 
   /**

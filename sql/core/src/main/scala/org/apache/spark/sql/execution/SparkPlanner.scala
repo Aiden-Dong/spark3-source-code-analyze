@@ -65,17 +65,13 @@ class SparkPlanner(val session: SparkSession, val experimentalMethods: Experimen
   }
 
   /**
-   * Used to build table scan operators where complex projection and filtering are done using
-   * separate physical operators.  This function returns the given scan operator with Project and
-   * Filter nodes added only when needed.  For example, a Project operator is only used when the
-   * final desired output requires complex expressions to be evaluated or when columns can be
-   * further eliminated out after filtering has been done.
+   * 用于构建表扫描操作符，其中复杂的投影和过滤操作通过独立的物理操作符完成。
+   * 该函数仅在需要时返回带有 Project 和 Filter 节点的给定扫描操作符。例如，只有当最终所需输出
+   * 需要评估复杂表达式或在过滤完成后可以进一步消除列时，才会使用 Project 操作符。
    *
-   * The `prunePushedDownFilters` parameter is used to remove those filters that can be optimized
-   * away by the filter pushdown optimization.
+   * `prunePushedDownFilters` 参数用于移除那些可以通过过滤器下推优化被优化掉的过滤器。
    *
-   * The required attributes for both filtering and expression evaluation are passed to the
-   * provided `scanBuilder` function so that it can avoid unnecessary column materialization.
+   * 过滤和表达式评估所需的属性被传递给提供的 `scanBuilder` 函数，以便它避免不必要的列物化。
    */
   def pruneFilterProject(
       projectList: Seq[NamedExpression],

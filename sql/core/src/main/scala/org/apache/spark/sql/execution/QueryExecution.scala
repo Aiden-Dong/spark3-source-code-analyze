@@ -75,6 +75,7 @@ class QueryExecution(
     sparkSession.sessionState.analyzer.executeAndCheck(logical, tracker)
   }
 
+  // 判断是否是 Command 类型SQL, 是否要立即执行
   lazy val commandExecuted: LogicalPlan = mode match {
     case CommandExecutionMode.NON_ROOT => analyzed.mapChildren(eagerlyExecuteCommands)
     case CommandExecutionMode.ALL => eagerlyExecuteCommands(analyzed)
@@ -116,9 +117,10 @@ class QueryExecution(
 
   def assertCommandExecuted(): Unit = commandExecuted
 
+  // 使用优化器优化 LogicalPlan
   lazy val optimizedPlan: LogicalPlan = {
-    // We need to materialize the commandExecuted here because optimizedPlan is also tracked under
-    // the optimizing phase
+    // 我们需要在这里物化 commandExecuted
+    // 因为 optimizedPlan 也会在优化阶段进行跟踪。
     assertCommandExecuted()
     executePhase(QueryPlanningTracker.OPTIMIZATION) {
       // 克隆计划，以避免在不同阶段（如分析、优化和规划）之间共享计划实例。
@@ -134,9 +136,9 @@ class QueryExecution(
 
   private def assertOptimized(): Unit = optimizedPlan
 
+  // 将逻辑计划转化为物理计划
   lazy val sparkPlan: SparkPlan = {
-    // We need to materialize the optimizedPlan here because sparkPlan is also tracked under
-    // the planning phase
+    // 我们需要在这里物化 optimizedPlan，因为 sparkPlan 也会在规划阶段进行跟踪。
     assertOptimized()
     executePhase(QueryPlanningTracker.PLANNING) {
       // Clone the logical plan here, in case the planner rules change the states of the logical
@@ -145,8 +147,8 @@ class QueryExecution(
     }
   }
 
-  // executedPlan should not be used to initialize any SparkPlan. It should be
-  // only used for execution.
+  // executedPlan不应用于初始化任何SparkPlan。应该是
+  // 仅用于执行。
   lazy val executedPlan: SparkPlan = {
     // We need to materialize the optimizedPlan here, before tracking the planning phase, to ensure
     // that the optimization time is not counted as part of the planning phase.
@@ -391,18 +393,17 @@ object QueryExecution {
 
   private def nextExecutionId: Long = _nextExecutionId.getAndIncrement
 
-  /**
-   * Construct a sequence of rules that are used to prepare a planned [[SparkPlan]] for execution.
-   * These rules will make sure subqueries are planned, make use the data partitioning and ordering
-   * are correct, insert whole stage code gen, and try to reduce the work done by reusing exchanges
-   * and subqueries.
-   */
+  /****
+   * 构建一系列规则，用于准备执行计划的[[SparkPlan]]。
+   * 这些规则将确保子查询是有计划的，利用数据分区和排序正确，插入整个阶段代码生成器，并尝试通过重用交换来减少所做的工作
+   * 以及子查询。
+   **/
   private[execution] def preparations(
       sparkSession: SparkSession,
       adaptiveExecutionRule: Option[InsertAdaptiveSparkPlan] = None,
       subquery: Boolean): Seq[Rule[SparkPlan]] = {
-    // `AdaptiveSparkPlanExec` is a leaf node. If inserted, all the following rules will be no-op
-    // as the original plan is hidden behind `AdaptiveSparkPlanExec`.
+    // `AdaptiveSparkPlanExec` 是一个叶子节点。如果插入，它将使所有后续的规则变为无操作（no-op），
+    // 因为原始计划被隐藏在 `AdaptiveSparkPlanExec` 后面。
     adaptiveExecutionRule.toSeq ++
     Seq(
       CoalesceBucketsInJoin,
@@ -430,6 +431,7 @@ object QueryExecution {
   /**
    * Prepares a planned [[SparkPlan]] for execution by inserting shuffle operations and internal
    * row format conversions as needed.
+   * 通过插入shuffle操作和内部命令来准备执行计划的[[SparkPlan]] 根据需要进行行格式转换。
    */
   private[execution] def prepareForExecution(
       preparations: Seq[Rule[SparkPlan]],

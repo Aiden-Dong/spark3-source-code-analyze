@@ -60,7 +60,9 @@ object SQLExecution {
    */
   def withNewExecutionId[T](
       queryExecution: QueryExecution,
-      name: Option[String] = None)(body: => T): T = queryExecution.sparkSession.withActive {
+      name: Option[String] = None)
+                            // body 为按需传值
+                           (body: => T): T = queryExecution.sparkSession.withActive {
     val sparkSession = queryExecution.sparkSession
     val sc = sparkSession.sparkContext
     val oldExecutionId = sc.getLocalProperty(EXECUTION_ID_KEY)

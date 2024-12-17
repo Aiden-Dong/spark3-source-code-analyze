@@ -23,42 +23,40 @@ import org.apache.spark.sql.execution.{FileSourceScanExec, FilterExec, ProjectEx
 import org.apache.spark.sql.execution.aggregate.BaseAggregateExec
 import org.apache.spark.sql.execution.exchange.Exchange
 
-/**
- * Disable unnecessary bucketed table scan based on actual physical query plan.
- * NOTE: this rule is designed to be applied right after [[EnsureRequirements]],
- * where all [[ShuffleExchangeExec]] and [[SortExec]] have been added to plan properly.
+
+/***
+ * 根据实际的物理查询计划禁用不必要的分桶表扫描。
+ * 注意：此规则设计为在 [[EnsureRequirements]] 之后应用，在此阶段所有 [[ShuffleExchangeExec]] 和
+ * [[SortExec]] 已正确添加到计划中。
  *
- * When BUCKETING_ENABLED and AUTO_BUCKETED_SCAN_ENABLED are set to true, go through
- * query plan to check where bucketed table scan is unnecessary, and disable bucketed table
- * scan if:
+ * 当 BUCKETING_ENABLED 和 AUTO_BUCKETED_SCAN_ENABLED 设置为 true 时，遍历查询计划以检查在哪些地方不需要分桶表扫描，
+ * 并在以下情况下禁用分桶表扫描：
  *
- * 1. The sub-plan from root to bucketed table scan, does not contain
- *    [[hasInterestingPartition]] operator.
+ * 1. 从根节点到分桶表扫描的子计划不包含 [[hasInterestingPartition]] 操作符。
  *
- * 2. The sub-plan from the nearest downstream [[hasInterestingPartition]] operator
- *    to the bucketed table scan, contains only [[isAllowedUnaryExecNode]] operators
- *    and at least one [[Exchange]].
+ * 2. 从最近的下游 [[hasInterestingPartition]] 操作符到分桶表扫描的子计划仅包含 [[isAllowedUnaryExecNode]] 操作符，
+ *    且至少包含一个 [[Exchange]]。
  *
- * Examples:
- * 1. no [[hasInterestingPartition]] operator:
+ * 示例：
+ * 1. 没有 [[hasInterestingPartition]] 操作符：
  *                Project
  *                   |
  *                 Filter
  *                   |
  *             Scan(t1: i, j)
- *  (bucketed on column j, DISABLE bucketed scan)
+ *  （按列 j 分桶，禁用分桶扫描）
  *
- * 2. join:
+ * 2. 连接：
  *         SortMergeJoin(t1.i = t2.j)
  *            /            \
  *        Sort(i)        Sort(j)
  *          /               \
  *      Shuffle(i)       Scan(t2: i, j)
- *        /         (bucketed on column j, enable bucketed scan)
+ *        /         （按列 j 分桶，启用分桶扫描）
  *   Scan(t1: i, j)
- * (bucketed on column j, DISABLE bucketed scan)
+ * （按列 j 分桶，禁用分桶扫描）
  *
- * 3. aggregate:
+ * 3. 聚合：
  *         HashAggregate(i, ..., Final)
  *                      |
  *                  Shuffle(i)
@@ -68,12 +66,12 @@ import org.apache.spark.sql.execution.exchange.Exchange
  *                    Filter
  *                      |
  *                  Scan(t1: i, j)
- *  (bucketed on column j, DISABLE bucketed scan)
+ *  （按列 j 分桶，禁用分桶扫描）
  *
- * The idea of [[hasInterestingPartition]] is inspired from "interesting order" in
- * the paper "Access Path Selection in a Relational Database Management System"
- * (https://dl.acm.org/doi/10.1145/582095.582099).
- */
+ * [[hasInterestingPartition]] 的思想来源于论文 "Access Path Selection in a Relational Database Management System"
+ * 中的 "interesting order"（https://dl.acm.org/doi/10.1145/582095.582099）。
+ **/
+
 object DisableUnnecessaryBucketedScan extends Rule[SparkPlan] {
 
   /**

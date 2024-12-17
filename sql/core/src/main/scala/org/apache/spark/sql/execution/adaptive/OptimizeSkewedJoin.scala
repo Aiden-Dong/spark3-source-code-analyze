@@ -34,25 +34,22 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.Utils
 
 /**
- * A rule to optimize skewed joins to avoid straggler tasks whose share of data are significantly
- * larger than those of the rest of the tasks.
+ * 一个优化规则，用于优化倾斜连接，避免数据量显著大于其他任务的数据量的滞后任务。
  *
- * The general idea is to divide each skew partition into smaller partitions and replicate its
- * matching partition on the other side of the join so that they can run in parallel tasks.
- * Note that when matching partitions from the left side and the right side both have skew,
- * it will become a cartesian product of splits from left and right joining together.
+ * 一般思路是将每个倾斜分区划分为更小的分区，并在连接的另一侧复制其匹配分区，以便它们能够并行运行任务。
+ * 注意，当左右两侧的匹配分区都存在倾斜时，它将变成左右分区的笛卡尔积连接。
  *
- * For example, assume the Sort-Merge join has 4 partitions:
- * left:  [L1, L2, L3, L4]
- * right: [R1, R2, R3, R4]
+ * 例如，假设 Sort-Merge 连接有 4 个分区：
+ * 左侧：[L1, L2, L3, L4]
+ * 右侧：[R1, R2, R3, R4]
  *
- * Let's say L2, L4 and R3, R4 are skewed, and each of them get split into 2 sub-partitions. This
- * is scheduled to run 4 tasks at the beginning: (L1, R1), (L2, R2), (L3, R3), (L4, R4).
- * This rule expands it to 9 tasks to increase parallelism:
- * (L1, R1),
- * (L2-1, R2), (L2-2, R2),
- * (L3, R3-1), (L3, R3-2),
- * (L4-1, R4-1), (L4-2, R4-1), (L4-1, R4-2), (L4-2, R4-2)
+ * 假设 L2、L4 和 R3、R4 是倾斜的，每个分区被拆分成 2 个子分区。最初计划运行 4 个任务：
+ * (L1, R1)，(L2, R2)，(L3, R3)，(L4, R4)。
+ * 该规则将其扩展为 9 个任务以增加并行性：
+ * (L1, R1)，
+ * (L2-1, R2)，(L2-2, R2)，
+ * (L3, R3-1)，(L3, R3-2)，
+ * (L4-1, R4-1)，(L4-2, R4-1)，(L4-1, R4-2)，(L4-2, R4-2)
  */
 case class OptimizeSkewedJoin(ensureRequirements: EnsureRequirements)
   extends Rule[SparkPlan] {

@@ -570,10 +570,9 @@ object SQLConf {
 
   val ADAPTIVE_EXECUTION_FORCE_APPLY = buildConf("spark.sql.adaptive.forceApply")
     .internal()
-    .doc("Adaptive query execution is skipped when the query does not have exchanges or " +
-      "sub-queries. By setting this config to true (together with " +
-      s"'${ADAPTIVE_EXECUTION_ENABLED.key}' set to true), Spark will force apply adaptive query " +
-      "execution for all supported queries.")
+    .doc("当查询不包含exchanges或子查询时，跳过自适应查询执行." +
+      "通过将此配置设置为 true(并且同时将 ${ADAPTIVE_EXECUTION_ENABLED.key} 设置为 true)" +
+      "Spark 将强制对所有支持的查询应用自适应查询执行.")
     .version("3.0.0")
     .booleanConf
     .createWithDefault(false)

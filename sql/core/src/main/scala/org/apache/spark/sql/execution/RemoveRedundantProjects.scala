@@ -27,14 +27,11 @@ import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.internal.SQLConf
 
 /**
- * Remove redundant ProjectExec node from the spark plan. A ProjectExec node is redundant when
- * - It has the same output attributes and orders as its child's output and the ordering of
- *   the attributes is required.
- * - It has the same output attributes as its child's output when attribute output ordering
- *   is not required.
- * This rule needs to be a physical rule because project nodes are useful during logical
- * optimization to prune data. During physical planning, redundant project nodes can be removed
- * to simplify the query plan.
+ * 从 Spark 计划中移除冗余的 ProjectExec 节点。当以下条件满足时，ProjectExec 节点是冗余的：
+ * - 它的输出属性和顺序与其子节点的输出相同，并且属性的顺序是必要的。
+ * - 当属性输出顺序不是必需时，它的输出属性与其子节点的输出相同。
+ * 这个规则需要是一个物理规则，因为在逻辑优化过程中，Project 节点有助于修剪数据。
+ * 在物理规划阶段，可以移除冗余的 Project 节点以简化查询计划。
  */
 object RemoveRedundantProjects extends Rule[SparkPlan] {
   def apply(plan: SparkPlan): SparkPlan = {

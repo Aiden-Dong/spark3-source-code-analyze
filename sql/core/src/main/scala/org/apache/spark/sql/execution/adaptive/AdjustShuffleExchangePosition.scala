@@ -24,6 +24,8 @@ import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 /**
  * This rule is used to adjust the shuffle exchange with special SparkPlan who
  * does not allow a shuffle on top of it.
+ * 该规则用于调整带有特殊 SparkPlan 的 shuffle exchange，
+ * 因该 SparkPlan 不允许在其上进行 shuffle。
  */
 object AdjustShuffleExchangePosition extends Rule[SparkPlan] {
   private def shouldAdjust(plan: SparkPlan): Boolean = plan match {

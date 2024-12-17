@@ -838,19 +838,16 @@ case class WholeStageCodegenExec(child: SparkPlan)(val codegenStageId: Int)
     copy(child = newChild)(codegenStageId)
 }
 
-
 /**
- * Find the chained plans that support codegen, collapse them together as WholeStageCodegen.
+ * 查找支持代码生成的链式计划，并将它们合并为 WholeStageCodegen。
  *
- * The `codegenStageCounter` generates ID for codegen stages within a query plan.
- * It does not affect equality, nor does it participate in destructuring pattern matching
- * of WholeStageCodegenExec.
+ * `codegenStageCounter` 为查询计划中的代码生成阶段生成 ID。
+ * 它不影响相等性，也不参与 WholeStageCodegenExec 的解构模式匹配。
  *
- * This ID is used to help differentiate between codegen stages. It is included as a part
- * of the explain output for physical plans, e.g.
+ * 这个 ID 用于帮助区分不同的代码生成阶段。它作为物理计划的解释输出的一部分，包括在内，例如：
  *
- * == Physical Plan ==
- * *(5) SortMergeJoin [x#3L], [y#9L], Inner
+ * == 物理计划 ==
+ * *(5) SortMergeJoin [x#3L], [y#9L], 内连接
  * :- *(2) Sort [x#3L ASC NULLS FIRST], false, 0
  * :  +- Exchange hashpartitioning(x#3L, 200)
  * :     +- *(1) Project [(id#0L % 2) AS x#3L]
@@ -862,22 +859,19 @@ case class WholeStageCodegenExec(child: SparkPlan)(val codegenStageId: Int)
  *          +- *(3) Filter isnotnull((id#6L % 2))
  *             +- *(3) Range (0, 5, step=1, splits=8)
  *
- * where the ID makes it obvious that not all adjacent codegen'd plan operators are of the
- * same codegen stage.
+ * 其中，ID 使得我们可以明显看出并非所有相邻的代码生成计划操作符都属于同一代码生成阶段。
  *
- * The codegen stage ID is also optionally included in the name of the generated classes as
- * a suffix, so that it's easier to associate a generated class back to the physical operator.
- * This is controlled by SQLConf: spark.sql.codegen.useIdInClassName
+ * 代码生成阶段的 ID 还可以选择性地包含在生成类的名称中作为后缀，以便更容易地将生成的类与物理操作符关联起来。
+ * 这由 SQLConf 控制：spark.sql.codegen.useIdInClassName。
  *
- * The ID is also included in various log messages.
+ * 该 ID 还包括在各种日志消息中。
  *
- * Within a query, a codegen stage in a plan starts counting from 1, in "insertion order".
- * WholeStageCodegenExec operators are inserted into a plan in depth-first post-order.
- * See CollapseCodegenStages.insertWholeStageCodegen for the definition of insertion order.
+ * 在查询中，计划中的代码生成阶段按 "插入顺序" 从 1 开始计数。
+ * WholeStageCodegenExec 操作符按深度优先后序插入计划中。
+ * 请参阅 CollapseCodegenStages.insertWholeStageCodegen 来了解插入顺序的定义。
  *
- * 0 is reserved as a special ID value to indicate a temporary WholeStageCodegenExec object
- * is created, e.g. for special fallback handling when an existing WholeStageCodegenExec
- * failed to generate/compile code.
+ * 0 被保留作为特殊的 ID 值，表示创建了一个临时的 WholeStageCodegenExec 对象，
+ * 例如在现有的 WholeStageCodegenExec 无法生成/编译代码时用于特殊的回退处理。
  */
 case class CollapseCodegenStages(
     codegenStageCounter: AtomicInteger = new AtomicInteger(0))

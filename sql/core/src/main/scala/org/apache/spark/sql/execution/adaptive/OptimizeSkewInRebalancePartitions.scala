@@ -22,15 +22,15 @@ import org.apache.spark.sql.execution.exchange.{REBALANCE_PARTITIONS_BY_COL, REB
 import org.apache.spark.sql.internal.SQLConf
 
 /**
- * A rule to optimize the skewed shuffle partitions in [[RebalancePartitions]] based on the map
- * output statistics, which can avoid data skew that hurt performance.
+ * 一个规则，用于基于 map 输出统计信息优化 [[RebalancePartitions]] 中的倾斜 shuffle 分区，
+ * 以避免影响性能的数据倾斜。
  *
- * We use ADVISORY_PARTITION_SIZE_IN_BYTES size to decide if a partition should be optimized.
- * Let's say we have 3 maps with 3 shuffle partitions, and assuming r1 has data skew issue.
- * the map side looks like:
+ * 我们使用 ADVISORY_PARTITION_SIZE_IN_BYTES 大小来决定是否优化某个分区。
+ * 假设我们有 3 个 map 和 3 个 shuffle 分区，并假设 r1 存在数据倾斜问题。
+ * map 端如下所示：
  *   m0:[b0, b1, b2], m1:[b0, b1, b2], m2:[b0, b1, b2]
- * and the reduce side looks like:
- *                            (without this rule) r1[m0-b1, m1-b1, m2-b1]
+ * reduce 端如下所示：
+ *                            （没有此规则时） r1[m0-b1, m1-b1, m2-b1]
  *                              /                                     \
  *   r0:[m0-b0, m1-b0, m2-b0], r1-0:[m0-b1], r1-1:[m1-b1], r1-2:[m2-b1], r2[m0-b2, m1-b2, m2-b2]
  */
@@ -40,9 +40,8 @@ object OptimizeSkewInRebalancePartitions extends AQEShuffleReadRule {
     Seq(REBALANCE_PARTITIONS_BY_NONE, REBALANCE_PARTITIONS_BY_COL)
 
   /**
-   * Splits the skewed partition based on the map size and the target partition size
-   * after split. Create a list of `PartialReducerPartitionSpec` for skewed partition and
-   * create `CoalescedPartition` for normal partition.
+   * 基于 map 大小和拆分后目标分区大小拆分倾斜分区。
+   * 为倾斜分区创建一个 `PartialReducerPartitionSpec` 列表，为正常分区创建 `CoalescedPartition`。
    */
   private def optimizeSkewedPartitions(
       shuffleId: Int,

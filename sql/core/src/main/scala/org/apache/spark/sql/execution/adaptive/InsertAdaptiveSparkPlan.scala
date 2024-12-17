@@ -50,9 +50,9 @@ case class InsertAdaptiveSparkPlan(
     case _ if shouldApplyAQE(plan, isSubquery) =>  // AQE 优化
       if (supportAdaptive(plan)) {
         try {
-          // Plan sub-queries recursively and pass in the shared stage cache for exchange reuse.
-          // Fall back to non-AQE mode if AQE is not supported in any of the sub-queries.
-          val subqueryMap = buildSubqueryMap(plan)
+          // 递归规划子查询，并传入共享的阶段缓存以便exchange重用.
+          // 如果任何子查询不支持 AQE，则回退到非 AQE 模式。
+          val subqueryMap = buildSubqueryMap(plan)   // 子查询处理
           val planSubqueriesRule = PlanAdaptiveSubqueries(subqueryMap)
           val preprocessingRules = Seq(
             planSubqueriesRule)
@@ -75,16 +75,13 @@ case class InsertAdaptiveSparkPlan(
     case _ => plan
   }
 
-  // AQE is only useful when the query has exchanges or sub-queries. This method returns true if
-  // one of the following conditions is satisfied:
-  //   - The config ADAPTIVE_EXECUTION_FORCE_APPLY is true.
-  //   - The input query is from a sub-query. When this happens, it means we've already decided to
-  //     apply AQE for the main query and we must continue to do it.
-  //   - The query contains exchanges.
-  //   - The query may need to add exchanges. It's an overkill to run `EnsureRequirements` here, so
-  //     we just check `SparkPlan.requiredChildDistribution` and see if it's possible that the
-  //     the query needs to add exchanges later.
-  //   - The query contains sub-query.
+  // AQE 仅在查询包含交换或子查询时才有用。如果满足以下任一条件，则此方法返回 true：
+  //   - 配置 ADAPTIVE_EXECUTION_FORCE_APPLY 为 true。
+  //   - 输入查询来自子查询。当发生这种情况时，意味着我们已经决定对主查询应用 AQE，并且必须继续执行。
+  //   - 查询包含交换。
+  //   - 查询可能需要添加交换。运行 `EnsureRequirements` 在这里过于复杂，因此我们只检查 `SparkPlan.requiredChildDistribution`，
+  //     看是否有可能查询稍后需要添加交换。
+  //   - 查询包含子查询。
   private def shouldApplyAQE(plan: SparkPlan, isSubquery: Boolean): Boolean = {
     conf.getConf(SQLConf.ADAPTIVE_EXECUTION_FORCE_APPLY) || isSubquery || {
       plan.exists {
@@ -108,9 +105,8 @@ case class InsertAdaptiveSparkPlan(
     plan.logicalLink.isDefined
 
   /**
-   * Returns an expression-id-to-execution-plan map for all the sub-queries.
-   * For each sub-query, generate the adaptive execution plan for each sub-query by applying this
-   * rule, or reuse the execution plan from another sub-query of the same semantics if possible.
+   * 返回所有子查询的表达式 ID 到执行计划的映射。
+   * 对于每个子查询，通过应用此规则生成自适应执行计划，或者在可能的情况下重用具有相同语义的其他子查询的执行计划。
    */
   private def buildSubqueryMap(plan: SparkPlan): Map[Long, BaseSubqueryExec] = {
     val subqueryMap = mutable.HashMap.empty[Long, BaseSubqueryExec]
@@ -118,7 +114,7 @@ case class InsertAdaptiveSparkPlan(
       return subqueryMap.toMap
     }
     plan.foreach(_.expressions.filter(_.containsPattern(PLAN_EXPRESSION)).foreach(_.foreach {
-      case expressions.ScalarSubquery(p, _, exprId, _)
+      case expressions.ScalarSubquery(p, _, exprId, _)    //
           if !subqueryMap.contains(exprId.id) =>
         val executedPlan = compileSubquery(p)
         verifyAdaptivePlan(executedPlan, p)
