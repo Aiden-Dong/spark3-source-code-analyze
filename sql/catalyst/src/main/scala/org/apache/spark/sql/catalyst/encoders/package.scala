@@ -22,10 +22,9 @@ import org.apache.spark.sql.errors.QueryExecutionErrors
 
 package object encoders {
   /**
-   * Returns an internal encoder object that can be used to serialize / deserialize JVM objects
-   * into Spark SQL rows.  The implicit encoder should always be unresolved (i.e. have no attribute
-   * references from a specific schema.)  This requirement allows us to preserve whether a given
-   * object type is being bound by name or by ordinal when doing resolution.
+   * 返回一个内部的 encoder 对象，能够将 JVM 对象序列化/反序列化为 Spark SQL 行。
+   * 隐式 encoder 应始终是未解析的（即不应包含来自特定 schema 的属性引用）。
+   * 这一要求使我们能够在解析时保留给定对象类型是按名称绑定还是按序号绑定。
    */
   def encoderFor[A : Encoder]: ExpressionEncoder[A] = implicitly[Encoder[A]] match {
     case e: ExpressionEncoder[A] =>

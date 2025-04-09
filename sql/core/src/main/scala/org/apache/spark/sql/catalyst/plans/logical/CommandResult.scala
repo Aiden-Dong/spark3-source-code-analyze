@@ -24,12 +24,9 @@ import org.apache.spark.sql.catalyst.plans.logical.statsEstimation.EstimationUti
 import org.apache.spark.sql.execution.SparkPlan
 
 /**
- * Logical plan node for holding data from a command.
- *
- * `commandLogicalPlan` and `commandPhysicalPlan` are just used to display the plan tree
- * for EXPLAIN.
- * `rows` may not be serializable and ideally we should not send `rows` to the executors.
- * Thus marking them as transient.
+ * 逻辑计划节点，用于保存命令数据。
+ * commandLogicalPlan 和 commandPhysicalPlan 仅用于显示 EXPLAIN 的计划树。
+ * rows 可能不可序列化，理想情况下我们不应该将 rows 发送到执行器。 因此将它们标记为 transient（瞬态）。
  */
 case class CommandResult(
     output: Seq[Attribute],

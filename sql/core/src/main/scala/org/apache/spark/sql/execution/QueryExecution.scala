@@ -71,14 +71,14 @@ class QueryExecution(
 
   // 分析逻辑树- 主要为状态符号填充元信息
   lazy val analyzed: LogicalPlan = executePhase(QueryPlanningTracker.ANALYSIS) {
-    // We can't clone `logical` here, which will reset the `_analyzed` flag.
+    // 我们不能在这里克隆 logical，因为这会重置 _analyzed 标志位。
     sparkSession.sessionState.analyzer.executeAndCheck(logical, tracker)
   }
 
   // 判断是否是 Command 类型SQL, 是否要立即执行
   lazy val commandExecuted: LogicalPlan = mode match {
     case CommandExecutionMode.NON_ROOT => analyzed.mapChildren(eagerlyExecuteCommands)
-    case CommandExecutionMode.ALL => eagerlyExecuteCommands(analyzed)
+    case CommandExecutionMode.ALL => eagerlyExecuteCommands(analyzed)                    // 默认情况
     case CommandExecutionMode.SKIP => analyzed
   }
 
@@ -91,10 +91,14 @@ class QueryExecution(
     case _ => "command"
   }
 
-  /*****
+  /**
    * 提前执行命令，或者是立刻执行命令
+   *  LogicalPlan.transformDown  是一个自顶向下的（需要优先处理父节点） 它的核心功能是遍历并修改逻辑计划的结构
+   * transformDown	自顶向下	需要优先处理父节点（如谓词下推）
+   *  transformUp	自底向上	需要子节点处理完毕后再处理父节点（如列剪裁）
    */
   private def eagerlyExecuteCommands(p: LogicalPlan) = p transformDown {
+
     case c: Command =>
       val qe = sparkSession.sessionState.executePlan(c, CommandExecutionMode.NON_ROOT)
       val result = SQLExecution.withNewExecutionId(qe, Some(commandExecutionName(c))) {
@@ -150,12 +154,10 @@ class QueryExecution(
   // executedPlan不应用于初始化任何SparkPlan。应该是
   // 仅用于执行。
   lazy val executedPlan: SparkPlan = {
-    // We need to materialize the optimizedPlan here, before tracking the planning phase, to ensure
-    // that the optimization time is not counted as part of the planning phase.
+    // 我们需要在跟踪规划阶段之前对 optimizedPlan 进行具体化，以确保优化时间不会被计入规划阶段的时间。
     assertOptimized()
     executePhase(QueryPlanningTracker.PLANNING) {
-      // clone the plan to avoid sharing the plan instance between different stages like analyzing,
-      // optimizing and planning.
+      // 克隆计划以避免在不同阶段（如分析、优化和规划）之间共享计划实例。
       QueryExecution.prepareForExecution(preparations, sparkPlan.clone())
     }
   }

@@ -779,17 +779,15 @@ abstract class TypeCoercionBase {
 }
 
 /**
- * A collection of [[Rule]] that can be used to coerce differing types that participate in
- * operations into compatible ones.
+ * 一组 [[Rule]] 规则的集合，用于在操作中将不同类型转换为兼容类型。
  *
- * Notes about type widening / tightest common types: Broadly, there are two cases when we need
- * to widen data types (e.g. union, binary comparison). In case 1, we are looking for a common
- * data type for two or more data types, and in this case no loss of precision is allowed. Examples
- * include type inference in JSON (e.g. what's the column's data type if one row is an integer
- * while the other row is a long?). In case 2, we are looking for a widened data type with
- * some acceptable loss of precision (e.g. there is no common type for double and decimal because
- * double's range is larger than decimal, and yet decimal is more precise than double, but in
- * union we would cast the decimal into double).
+ * 关于类型拓宽（widening）/ 最紧凑共同类型（tightest common types）的说明：
+ * 通常情况下，我们在以下两类场景中需要拓宽数据类型（例如 union 或二元比较）：
+ * 情况 1：我们需要为两个或多个数据类型找到一个共同的数据类型，在这个过程中不允许精度丢失。
+ *   示例：在 JSON 的类型推断中，比如某一列某一行是整数（integer），而另一行是长整型（long），那么列的数据类型应该是什么？
+ *
+ * 情况 2：我们需要找到一个拓宽后的数据类型，允许有一定的精度损失。
+ *   示例：double 和 decimal 之间没有完全兼容的共同类型，因为 double 的表示范围更广，而 decimal 的精度更高。但在 union 操作中，我们会把 decimal 转换为 double，以达成统一。
  */
 object TypeCoercion extends TypeCoercionBase {
 

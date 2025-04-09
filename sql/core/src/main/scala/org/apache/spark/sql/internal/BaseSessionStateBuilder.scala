@@ -175,9 +175,8 @@ abstract class BaseSessionStateBuilder(
   protected def udfRegistration: UDFRegistration = new UDFRegistration(functionRegistry)
 
   /**
-   * Logical query plan analyzer for resolving unresolved attributes and relations.
-   *
-   * Note: this depends on the `conf` and `catalog` fields.
+   * 用于解析未解析属性和关系的逻辑查询计划分析器。
+   * 注意：这依赖于 conf 和 catalog 字段。
    */
   protected def analyzer: Analyzer = new Analyzer(catalogManager) {
     override val extendedResolutionRules: Seq[Rule[LogicalPlan]] =

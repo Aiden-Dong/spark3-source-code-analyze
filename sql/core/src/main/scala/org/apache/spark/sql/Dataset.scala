@@ -105,61 +105,53 @@ private[sql] object Dataset {
 }
 
 /**
- * A Dataset is a strongly typed collection of domain-specific objects that can be transformed
- * in parallel using functional or relational operations. Each Dataset also has an untyped view
- * called a `DataFrame`, which is a Dataset of [[Row]].
+ * Dataset 是一组强类型的、面向特定领域对象的集合，可以通过函数式或关系型操作并行地进行转换。
+ * 每个 Dataset 同时也有一个无类型的视图，称为 DataFrame，它是一个由 [[Row]] 组成的 Dataset。
  *
- * Operations available on Datasets are divided into transformations and actions. Transformations
- * are the ones that produce new Datasets, and actions are the ones that trigger computation and
- * return results. Example transformations include map, filter, select, and aggregate (`groupBy`).
- * Example actions count, show, or writing data out to file systems.
+ * Dataset 上可用的操作分为两类：转换（transformations）和动作（actions）。转换操作会生成新的 Dataset，而动作操作会触发计算并返回结果。
+ * 常见的转换操作包括 map、filter、select 和聚合操作（如 groupBy）。常见的动作操作包括 count、show，或者将数据写入文件系统。
  *
- * Datasets are "lazy", i.e. computations are only triggered when an action is invoked. Internally,
- * a Dataset represents a logical plan that describes the computation required to produce the data.
- * When an action is invoked, Spark's query optimizer optimizes the logical plan and generates a
- * physical plan for efficient execution in a parallel and distributed manner. To explore the
- * logical plan as well as optimized physical plan, use the `explain` function.
+ * Dataset 是“惰性”的，也就是说，只有在执行某个动作（action）时，计算才会被触发。
+ * 在内部，Dataset 表示一个逻辑计划（logical plan），该计划描述了生成数据所需的计算过程。
+ * 当动作被调用时，Spark 的查询优化器会对逻辑计划进行优化，并生成一个用于高效执行的物理计划（physical plan），该计划能够以并行和分布式的方式运行。
+ * 要查看逻辑计划和优化后的物理计划，可以使用 explain 函数。
  *
- * To efficiently support domain-specific objects, an [[Encoder]] is required. The encoder maps
- * the domain specific type `T` to Spark's internal type system. For example, given a class `Person`
- * with two fields, `name` (string) and `age` (int), an encoder is used to tell Spark to generate
- * code at runtime to serialize the `Person` object into a binary structure. This binary structure
- * often has much lower memory footprint as well as are optimized for efficiency in data processing
- * (e.g. in a columnar format). To understand the internal binary representation for data, use the
- * `schema` function.
+ * 为了高效地支持特定领域的对象，需要使用 [[Encoder]]。Encoder 的作用是将特定领域的类型 T 映射到 Spark 的内部类型系统。
+ * 例如，假设有一个 Person 类，包含两个字段：name（字符串）和 age（整数），Encoder 会告诉 Spark 在运行时生成代码，将 Person 对象序列化为一种二进制结构。
+ * 这种二进制结构通常具有更低的内存占用，并且在数据处理（例如列式格式）中更高效。要了解数据的内部二进制表示方式，可以使用 schema 函数。
  *
- * There are typically two ways to create a Dataset. The most common way is by pointing Spark
- * to some files on storage systems, using the `read` function available on a `SparkSession`.
+ * 通常有两种方式来创建一个 Dataset。最常见的方法是使用 SparkSession 上的 read 函数，指定 Spark 去读取存储系统中的某些文件。
+ *
  * {{{
  *   val people = spark.read.parquet("...").as[Person]  // Scala
  *   Dataset<Person> people = spark.read().parquet("...").as(Encoders.bean(Person.class)); // Java
  * }}}
  *
- * Datasets can also be created through transformations available on existing Datasets. For example,
- * the following creates a new Dataset by applying a filter on the existing one:
+ * Dataset 也可以通过对已有 Dataset 应用转换操作来创建。例如，下面的代码通过对已有 Dataset 应用过滤操作来创建一个新的 Dataset :
+ *
  * {{{
  *   val names = people.map(_.name)  // in Scala; names is a Dataset[String]
  *   Dataset<String> names = people.map((Person p) -> p.name, Encoders.STRING));
  * }}}
  *
- * Dataset operations can also be untyped, through various domain-specific-language (DSL)
- * functions defined in: Dataset (this class), [[Column]], and [[functions]]. These operations
- * are very similar to the operations available in the data frame abstraction in R or Python.
+ * Dataset 的操作也可以是无类型的，方式是通过在 Dataset（当前类）、[[Column]] 和 [[functions]] 中定义的各种特定领域语言（DSL）函数来实现。
+ * 这些操作与 R 或 Python 中 DataFrame 抽象所提供的操作非常相似。
  *
- * To select a column from the Dataset, use `apply` method in Scala and `col` in Java.
+ * 要从 Dataset 中选择某一列，在 Scala 中使用 apply 方法，在 Java 中使用 col 方法。
+ *
  * {{{
  *   val ageCol = people("age")  // in Scala
  *   Column ageCol = people.col("age"); // in Java
  * }}}
  *
- * Note that the [[Column]] type can also be manipulated through its various functions.
+ * 注意，[[Column]] 类型也可以通过其各种函数进行操作。
  * {{{
  *   // The following creates a new column that increases everybody's age by 10.
  *   people("age") + 10  // in Scala
  *   people.col("age").plus(10);  // in Java
  * }}}
  *
- * A more concrete example in Scala:
+ * 在 Scala 中的一个更具体的例子：
  * {{{
  *   // To create Dataset[Row] using SparkSession
  *   val people = spark.read.parquet("...")
@@ -192,10 +184,11 @@ private[sql] object Dataset {
  */
 @Stable
 class Dataset[T] private[sql](
-    @DeveloperApi @Unstable @transient val queryExecution: QueryExecution,   // 执行管理树
-    @DeveloperApi @Unstable @transient val encoder: Encoder[T])              //  schema 序列化类
+    @DeveloperApi @Unstable @transient val queryExecution: QueryExecution,     // 执行管理树
+    @DeveloperApi @Unstable @transient val encoder: Encoder[T])                //  schema 序列化类
   extends Serializable {
 
+  // 获取 sparkSession
   @transient lazy val sparkSession: SparkSession = {
     if (queryExecution == null || queryExecution.sparkSession == null) {
       throw QueryExecutionErrors.transformationsAndActionsNotInvokedByDriverError()
@@ -211,7 +204,6 @@ class Dataset[T] private[sql](
 
   // Note for Spark contributors: if adding or updating any action in `Dataset`, please make sure
   // you wrap it with `withNewExecutionId` if this actions doesn't call other action.
-
   def this(sparkSession: SparkSession, logicalPlan: LogicalPlan, encoder: Encoder[T]) = {
     this(sparkSession.sessionState.executePlan(logicalPlan), encoder)
   }
@@ -233,6 +225,8 @@ class Dataset[T] private[sql](
   /**
    * 目前 [[ExpressionEncoder]] 是 [[Encoder]] 的唯一实现，在这里我们将传入的编码器显式转换为 [[ExpressionEncoder]]，
    * 并将其标记为隐式，这样我们可以在构造具有相同对象类型（可能会解析为不同模式）的新 Dataset 对象时使用它。
+   *
+   * [[ExpressionEncoder.assertUnresolved()]]
    */
   private[sql] implicit val exprEnc: ExpressionEncoder[T] = encoderFor(encoder)
 

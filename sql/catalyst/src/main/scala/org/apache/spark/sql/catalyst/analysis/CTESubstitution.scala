@@ -27,24 +27,16 @@ import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.internal.SQLConf.{LEGACY_CTE_PRECEDENCE_POLICY, LegacyBehaviorPolicy}
 
 /**
- * Analyze WITH nodes and substitute child plan with CTE references or CTE definitions depending
- * on the conditions below:
- * 1. If in legacy mode, or if the query is a SQL command or DML statement, replace with CTE
- *    definitions, i.e., inline CTEs.
- * 2. Otherwise, replace with CTE references `CTERelationRef`s. The decision to inline or not
- *    inline will be made later by the rule `InlineCTE` after query analysis.
+ * 分析 WITH 节点，并根据以下条件用 CTE 引用或 CTE 定义替换子计划：
+ *  1. 如果处于兼容模式（legacy mode），或者查询是一个 SQL 命令或 DML 语句，则用 CTE 定义替换，即内联 CTE；
+ *  2. 否则，替换为 CTE 引用 CTERelationRef。是否内联的决定将在查询分析之后，由规则 InlineCTE 来做出。
  *
- * All the CTE definitions that are not inlined after this substitution will be grouped together
- * under one `WithCTE` node for each of the main query and the subqueries. Any of the main query
- * or the subqueries that do not contain CTEs or have had all CTEs inlined will obviously not have
- * any `WithCTE` nodes. If any though, the `WithCTE` node will be in the same place as where the
- * outermost `With` node once was.
+ * 所有在该替换过程中未被内联的 CTE 定义，将会被统一归入一个 WithCTE 节点中，无论是在主查询中，还是在子查询中。
+ * 任何不包含 CTE，或其所有 CTE 均已被内联的主查询或子查询，显然将不会包含 WithCTE 节点。但如果有，它们的 WithCTE 节点会处于原来最外层 With 节点所在的位置。
  *
- * The CTE definitions in a `WithCTE` node are kept in the order of how they have been resolved.
- * That means the CTE definitions are guaranteed to be in topological order base on their
- * dependency for any valid CTE query (i.e., given CTE definitions A and B with B referencing A,
- * A is guaranteed to appear before B). Otherwise, it must be an invalid user query, and an
- * analysis exception will be thrown later by relation resolving rules.
+ * WithCTE 节点中的 CTE 定义将按照它们被解析的顺序保存。
+ * 这意味着，对于任何合法的 CTE 查询，这些定义一定是按依赖关系的拓扑顺序排列的（例如，若有两个 CTE 定义 A 和 B，且 B 依赖于 A，则 A 一定出现在 B 之前）。
+ * 否则，这将是一个非法的用户查询，稍后在解析关系时会抛出分析异常。
  */
 object CTESubstitution extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = {

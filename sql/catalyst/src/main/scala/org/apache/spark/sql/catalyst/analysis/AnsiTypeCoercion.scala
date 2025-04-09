@@ -24,11 +24,8 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.types._
 
 /**
- * In Spark ANSI mode, the type coercion rules are based on the type precedence lists of the input
- * data types.
- * As per the section "Type precedence list determination" of "ISO/IEC 9075-2:2011
- * Information technology - Database languages - SQL - Part 2: Foundation (SQL/Foundation)",
- * the type precedence lists of primitive data types are as following:
+ * 在 Spark 的 ANSI 模式下，类型强制转换规则基于输入数据类型的“类型优先级列表”。
+ * 根据 ISO/IEC 9075-2:2011《信息技术-数据库语言-SQL-第2部分：基础（SQL/Foundation）》中“类型优先级列表的确定”一节，原始数据类型的优先级列表如下：
  *   * Byte: Byte, Short, Int, Long, Decimal, Float, Double
  *   * Short: Short, Int, Long, Decimal, Float, Double
  *   * Int: Int, Long, Decimal, Float, Double
@@ -42,18 +39,15 @@ import org.apache.spark.sql.types._
  *   * Binary: Binary
  *   * Boolean: Boolean
  *   * Interval: Interval
- * As for complex data types, Spark will determine the precedent list recursively based on their
- * sub-types and nullability.
+ * 对于复杂类型（如 struct、array、map），Spark 会根据它们的子类型及可空性递归地确定优先级列表。
  *
- * With the definition of type precedent list, the general type coercion rules are as following:
- *   * Data type S is allowed to be implicitly cast as type T iff T is in the precedence list of S
- *   * Comparison is allowed iff the data type precedence list of both sides has at least one common
- *     element. When evaluating the comparison, Spark casts both sides as the tightest common data
- *     type of their precedent lists.
- *   * There should be at least one common data type among all the children's precedence lists for
- *     the following operators. The data type of the operator is the tightest common precedent
- *     data type.
- *       * In
+ * 有了类型优先级列表的定义，通用的类型强制转换规则如下：
+ *  * 如果类型 T 在类型 S 的优先级列表中，则允许将数据类型 S 隐式转换为 T；
+ *  * 若左右两边的数据类型优先级列表中至少有一个共同元素，则允许进行比较操作；
+ *
+ * 在执行比较时，Spark 会将两边都转换为它们优先级列表中的最紧凑的共同数据类型；
+ *
+ * 对于如下操作符，所有子表达式的优先级列表中必须至少有一个共同的数据类型，最终操作符的类型为最紧凑的共同优先类型：
  *       * Except
  *       * Intersect
  *       * Greatest
@@ -66,11 +60,11 @@ import org.apache.spark.sql.types._
  *       * Sequence
  *       * MapConcat
  *       * CreateMap
- *   * For complex types (struct, array, map), Spark recursively looks into the element type and
- *     applies the rules above.
- *  Note: this new type coercion system will allow implicit converting String type as other
- *  primitive types, in case of breaking too many existing Spark SQL queries. This is a special
- *  rule and it is not from the ANSI SQL standard.
+ *   * 对于复杂类型（struct、array、map），Spark 会递归查找元素类型并应用上述规则。
+ *
+ *
+ * 注意：为了避免破坏大量现有 Spark SQL 查询，这个新的类型强制系统允许将 String 类型隐式转换为其他原始类型。
+ * 这是 Spark 的特殊规则，并非来源于 ANSI SQL 标准。
  */
 object AnsiTypeCoercion extends TypeCoercionBase {
   override def typeCoercionRules: List[Rule[LogicalPlan]] =

@@ -238,14 +238,15 @@ class Analyzer(override val catalogManager: CatalogManager)
       maxIterationsSetting = SQLConf.ANALYZER_MAX_ITERATIONS.key)
 
   /**
-   * Override to provide additional rules for the "Resolution" batch.
+   * 重写此方法以为 "Resolution" 批次提供额外的规则。
+   * 跳转 : [[BaseSessionStateBuilder.analyzer]]
    */
   val extendedResolutionRules: Seq[Rule[LogicalPlan]] = Nil
 
   /**
-   * Override to provide rules to do post-hoc resolution. Note that these rules will be executed
-   * in an individual batch. This batch is to run right after the normal resolution batch and
-   * execute its rules in one pass.
+   * 重写此方法以提供用于事后解析的规则。请注意，这些规则将会在一个独立的批次中执行。
+   * 该批次将在常规解析（Resolution）批次之后立即运行，并以一次遍历的方式执行其所有规则。
+   * 跳转 : [[BaseSessionStateBuilder.analyzer]]
    */
   val postHocResolutionRules: Seq[Rule[LogicalPlan]] = Nil
 
@@ -255,73 +256,181 @@ class Analyzer(override val catalogManager: CatalogManager)
     TypeCoercion.typeCoercionRules
   }
 
-
-  // FixedPoint (spark.sql.analyzer.maxIterations:100)
-  // Once (1)
-  //
-  // 定义分析规则
+  /**
+   * FixedPoint (spark.sql.analyzer.maxIterations:100)
+   * Once (1)
+   *
+   * 定义分析规则
+   */
   override def batches: Seq[Batch] = Seq(
-    // spark.sql.analyzer.maxIterations
-    Batch("Substitution", fixedPoint,
-      // This rule optimizes `UpdateFields` expression chains so looks more like optimization rule.
-      // However, when manipulating deeply nested schema, `UpdateFields` expression tree could be
-      // very complex and make analysis impossible. Thus we need to optimize `UpdateFields` early
-      // at the beginning of analysis.
+
+    Batch("Substitution", fixedPoint,    // SQL 优化，逻辑树替换
+      // 优化数据更新操作,以减少冗余计算或数据扫描
+      // (字段更新合并,‌表达式简化,‌列剪裁)
       OptimizeUpdateFields,
+      // 主要用于处理 ‌公共表表达式（CTE）‌ 的逻辑替换，以优化查询执行效率
+      // （‌消除重复计算， ‌优化执行计划结构, ‌协调数据分布与属性）
       CTESubstitution,
+      // 主要用于 ‌优化窗口函数（Window Function）的执行逻辑‌，通过替换或重构窗口计算步骤，减少冗余计算并提升查询性能。
+      // (消除冗余窗口计算, 窗口谓词下推优化,  窗口函数与普通聚合函数的协同优化)
       WindowsSubstitution,
+      // 主要用于 ‌简化或消除查询中的 UNION 操作‌，以提升执行效率并减少计算开销。
+      // (消除冗余的 UNION 操作, 优先使用 UNION ALL 替代 UNION, 优化子查询与 UNION 的嵌套结构, 识别并移除无效 UNION 分支)
       EliminateUnions,
+      // 主要用于 ‌处理查询中未解析的序数引用‌（如 ORDER BY、GROUP BY 中的列位置序号），将其替换为具体的列表达式，确保逻辑计划的正确性和执行效率。
+      // - 将 ORDER BY 1、GROUP BY 2 等基于列序号的隐式引用，转换为显式的列名或表达式‌
+      // - 替换语法树中未绑定的序数占位符，生成完全解析的逻辑算子树‌
+      // - 确保嵌套查询或联合查询中序数引用的准确性
       SubstituteUnresolvedOrdinals),
+
+    // 是否移除SQL 中所有的Hints (spark.sql.optimizer.disableHints)
     Batch("Disable Hints", Once, new ResolveHints.DisableHints),
-    Batch("Hints", fixedPoint, ResolveHints.ResolveJoinStrategyHints, ResolveHints.ResolveCoalesceHints),
+
+    Batch("Hints", fixedPoint,         // Hints 处理
+      // 主要用于 ‌解析并应用查询中显式指定的join 策略提示‌（如 BROADCAST、MERGE、SHUFFLE_HASH 等）
+      // 以覆盖优化器的默认连接策略选择，从而优化复杂查询的执行性能‌
+      // (显示指定join 策略,  优化复杂 JOIN 操作的执行计划)
+      ResolveHints.ResolveJoinStrategyHints,
+      // 主要用于 ‌解析并应用查询中与 COALESCE 函数相关的优化提示‌，以优化包含 COALESCE 表达式的查询逻辑，提升执行效率。
+      // (优化 COALESCE 表达式的执行逻辑, 结合索引或统计信息优化计算路径, 避免冗余计算与数据回表)
+      ResolveHints.ResolveCoalesceHints),
+
+    // 简单检查是否引用了不存在的函数, 以及参数类型是否正确
     Batch("Simple Sanity Check", Once, LookupFunctions),
+
+    // 兼容性规则‌，主要用于 ‌在逻辑计划生成阶段保留旧版本系统或框架的输出列定义‌，确保升级时现有查询的稳定性
+    // 维护输出列名兼容性, 避免属性解析冲突, 支持渐进式迁移
     Batch("Keep Legacy Outputs", Once, KeepLegacyOutputs),
-    Batch("Resolution", fixedPoint,
+
+    Batch("Resolution", fixedPoint,       // 解析所有的 UnResolve 类型操作
+      // 主要用于‌在逻辑计划阶段识别并绑定表值函数的元数据‌，确保函数调用合法且可执行。
+      // (函数元数据绑定与验证, 逻辑计划节点替换, 输出结构推导与适配)
       ResolveTableValuedFunctions(v1SessionCatalog) ::
+      // 解析和验证SQL语句中的多级命名空间（如 Catalog、Database）‌，确保对象（表、视图等）的路径合法且可访问。
+      // (命名空间层级解析, 元数据存在性校验, 跨数据源协同, 逻辑计划节点替换)
       ResolveNamespace(catalogManager) ::
+      // 用于 ‌处理 SQL 查询中 Catalog 的显式或隐式引用‌，确保 Catalog 的存在性、有效性及元数据绑定，为后续表/视图解析提供基础支撑
+      // (Catalog 路径解析与绑定, Catalog 存在性校验, 逻辑计划节点转换)
       new ResolveCatalogs(catalogManager) ::
+      // 主要用于 ‌处理用户查询中显式指定的列名或表达式‌，确保列名的有效性、唯一性及元数据绑定。
+      // (列名解析与元数据绑定, 列别名处理与冲突检测, 星号（*）展开与扩展)
       ResolveUserSpecifiedColumns ::
+      // 主要用于 ‌处理 INSERT INTO 语句的元数据绑定与逻辑计划生成‌，确保插入操作的目标表、列匹配及数据写入模式的合法性。
+      // (目标表元数据解析与验证‌, 插入模式处理‌, 列名匹配与隐式转换, 逻辑计划生成)
       ResolveInsertInto ::
-      ResolveRelations ::       // 表解析， 将语句中表占位符处理掉，替换为具体的带有表元信息的结构
+      // 主要用于 ‌处理逻辑计划中未解析的表/视图引用‌，将其绑定到 Catalog 中具体的元数据，确保查询的合法性。
+      // (表/视图元数据绑定, 多版本表与别名处理, 多数据源支持)
+      ResolveRelations ::
+      // 处理分区表的分区规范（Partition Specification）的元数据绑定与合法性校验‌，确保分区操作的正确性和高效性。
+      // (分区列存在性校验, 分区值类型校验与转换, 动态分区与静态分区解析, 分区路径生成与元数据关联)
       ResolvePartitionSpec ::
+      // 主要用于‌处理查询中字段名解析、位置映射及类型校验‌，确保查询逻辑与表结构的元数据一致性。
+      // (字段名存在性校验与歧义消除‌, 字段位置映射与类型匹配, 嵌套结构处理与别名解析)
       ResolveFieldNameAndPosition ::
+      // 主要用于 ‌自动绑定并添加与数据源元数据相关的隐含列‌（如分区列、文件路径列等），以支持用户查询中未显式指定但依赖元数据的场景。
+      // (分区列补充, 位置绑定)
       AddMetadataColumns ::
+      // 主要用于 ‌检测并消除逻辑计划中重复引用的表或视图关系‌，避免因多次引用同一数据源导致的语义歧义或执行错误‌
+      // (重复关系检测与别名生成, 逻辑计划唯一性保障)
       DeduplicateRelations ::
+      // 主要用于 ‌解析逻辑计划中的未绑定列名（UnresolvedAttribute），确保列名与底层数据源的元数据正确匹配‌，并消除歧义性引用。
+      // (列名解析与绑定, 作用域层级管理, 唯一标识符生成)
       ResolveReferences ::
+      // 用于处理逻辑计划中带有名称占位符的表达式，确保其正确关联底层元数据并生成可执行的逻辑计划
+      // (占位符解析与替换, 作用域与歧义处理, 动态参数与模板化SQL支持)
       ResolveExpressionsWithNamePlaceholders ::
+      // 主要用于 ‌处理逻辑计划中与反序列化操作相关的未绑定表达式‌，确保数据从外部格式（如 JSON、Parquet）转换为 Catalyst 内部数据类型时的正确性与一致性。
+      // (反序列化器与数据类型绑定, 复杂数据结构的解析支持, 动态 Schema 推断)
       ResolveDeserializer ::
+      // 主要用于 ‌处理逻辑计划中涉及对象实例化的表达式‌，确保新创建的对象实例（如用户自定义类型或复杂数据结构）能够正确绑定到 Catalyst 引擎的数据模型中，并验证其类型与执行逻辑的兼容性‌
+      // (对象实例化表达式的解析, 类型验证与兼容性检查, 复杂类型与自定义类型的支持)
       ResolveNewInstance ::
+      // 主要用于 ‌处理表达式中的类型向上转换（UpCast）‌，确保操作数的类型兼容性，并遵循 Catalyst 引擎的类型系统规范
+      // (隐式类型提升与兼容性验证, 显式类型转换的规范化处理, 表达式树的类型统一)
       ResolveUpCast ::
+      // 主要用于 ‌处理分组聚合操作（如 GROUP BY、GROUPING SETS、CUBE、ROLLUP）的语义解析与逻辑优化‌，确保多维聚合操作的语法合法性与执行逻辑的正确性‌
+      // (分组表达式的解析与验证, 多维聚合操作的转换, 聚合函数与分组逻辑的协调)
       ResolveGroupingAnalytics ::
+      // 主要用于 ‌处理 PIVOT 操作的语法解析、逻辑转换及语义验证‌，实现将行数据动态转换为列形式的透视表结构，支持多维数据的高效聚合与展示‌
+      // (语法解析与列展开，数据转换逻辑重构, 语义验证与冲突处理)
       ResolvePivot ::
+      // 主要用于 ‌处理 ORDER BY 和 GROUP BY 子句中对列的序数引用（如数字 1、2 表示列位置）的解析与验证‌，确保语法合法性及执行逻辑的正确性‌
+      // (序数引用的解析与映射, 语法合法性验证, 复杂查询的兼容性处理)
       ResolveOrdinalInOrderByAndGroupBy ::
+      // 主要用于 ‌处理 GROUP BY 子句中对聚合列别名的引用‌，确保别名能正确映射到对应的聚合表达式（如 SUM(sales)），同时验证语法合法性及执行逻辑的一致性‌
+      // (聚合别名的解析与替换, 语法合法性验证, 冲突与歧义处理)
       ResolveAggAliasInGroupBy ::
+      // 主要用于 ‌检测并修复逻辑计划中缺失或未解析的列、表、函数等引用‌，确保查询语义的完整性与执行正确性。
+      // (缺失引用的识别与修复, 作用域与上下文管理, 元数据整合与动态校验)
       ResolveMissingReferences ::
+      // 是结合文本分析与代码生成能力的工具，主要用于 ‌自动化生成结构化数据提取逻辑
+      // (数据特征解析与模板生, 动态规则与代码生成, 语义约束与错误预防)
       ExtractGenerator ::
+      // 要用于 ‌处理 GENERATE 相关的操作‌（如生成虚拟表、展开数组或复杂类型字段），确保生成逻辑的语法和语义正确性。
+      // (解析 GENERATE 类操作语法, 列引用与作用域管理, 跨层引用校验‌)
       ResolveGenerate ::
+      // 主要用于 ‌解析和验证 SQL 中的函数调用‌，确保函数名称、参数类型及作用域合法，并绑定到执行引擎支持的具体实现。
+      // (函数引用解析, 参数校验与类型推导, 表达式转换与逻辑计划重构)
       ResolveFunctions ::
+      // 用于 ‌解析和验证别名映射关系的核心机制‌，确保别名与实际资源的绑定合法且一致
+      // (别名与目标资源的映射管理, 作用域与生命周期校验, 元数据绑定与逻辑计划优化)
       ResolveAliases ::
+      // 主要用于 ‌解析和重写子查询‌，使其能够高效整合到主查询逻辑中，同时确保语法与语义的正确性。
+      // (子查询类型识别与转换, 转换优化, 解关联与作用域管理)
       ResolveSubquery ::
+      // 用于 ‌处理子查询中列别名的解析与作用域管理‌的关键规则
+      // (列别名作用域限定, 别名冲突检测与重命名, 类型与元数据一致性校验)
       ResolveSubqueryColumnAliases ::
+      // 解析和优化窗口函数（Window Function）中排序子句（ORDER BY）‌ 的关键规则
+      // (窗口排序语义解析, 排序逻辑优化, 元数据与类型校验)
       ResolveWindowOrder ::
+      // ‌解析和验证窗口函数（Window Function）的窗口框架（Window Frame）定义‌ 的关键规则
+      // (语法合法性检查, 默认窗口框架填充, 数据类型与表达式解析, 优化与冗余消除)
       ResolveWindowFrame ::
+      // 用于‌解析和转换NATURAL JOIN与USING语法‌的核心规则
+      // (隐式连接条件推导, 重复列消除与别名处理, 语法转换与逻辑优化)
       ResolveNaturalAndUsingJoin ::
+      // 解析和绑定查询输出结构与目标关系（如表或视图）的关联性‌
+      // (输出元数据校验与绑定, 投影列解析与调整, 动态输出关系处理)
       ResolveOutputRelation ::
+      // 从逻辑计划中识别并分离窗口函数（Window Functions）表达式‌ 的关键规则
+      // (窗口函数表达式提取, 窗口定义统一管理, 隐式窗口推导‌)
       ExtractWindowExpressions ::
+      // 处理全局聚合操作（如无分组的聚合函数）
+      // (全局聚合逻辑转换, 聚合表达式优化, 物理执行适配)
       GlobalAggregates ::
+      // 解析和验证聚合函数合法性‌
+      // (聚合函数解析与绑定, 分组逻辑适配, 表达式重写与优化, 执行计划适配)
       ResolveAggregateFunctions ::
+      // 按时间维度划分无界数据流并定义计算边界‌
       TimeWindowing ::
+      // 基于数据活动间隔动态划分无界数据流‌
       SessionWindowing ::
+      // ‌解析并验证内联表（Inline Table）合法性
+      // (内联表语法解析, 列名与类型推导, 逻辑计划适配)
       ResolveInlineTables ::
+      // ‌解析 Lambda 表达式中的变量绑定与类型推导‌
+      // (Lambda 变量解析与绑定, 类型推导与校验, 高阶函数支持)
       ResolveLambdaVariables ::
+      // 解析和统一时区信息
+      // (时区标识符解析与标准化, 时间数据转换逻辑, 时区相关函数支持)
       ResolveTimeZone ::
+      // 解析并绑定随机种子（Random Seed）配置
+      // (随机种子配置解析, 类型校验与兼容性, 随机操作支持‌)
       ResolveRandomSeed ::
+      // 解析并校验二元算术表达式
+      // (运算符解析与类型推导, 表达式合法性检查, 复杂场景支持)
       ResolveBinaryArithmetic ::
+      // 解析并校验 UNION 操作符‌
+      // (语法结构校验与列对齐, 重复数据处理逻辑, 复杂查询支持与优化)
       ResolveUnion ::
+      // 在逻辑计划阶段对 DELETE 操作进行语法适配、优化及底层存储兼容性处理
+      // (语法适配与兼容性处理, 逻辑计划重写与优化, 权限与约束校验)
       RewriteDeleteFromTable ::
       typeCoercionRules ++
       Seq(ResolveWithCTE) ++
       extendedResolutionRules : _*),
+
     Batch("Remove TempResolvedColumn", Once, RemoveTempResolvedColumn),
     Batch("Apply Char Padding", Once, ApplyCharTypePadding),
     Batch("Post-Hoc Resolution", Once, Seq(ResolveCommandsWithIfExists) ++ postHocResolutionRules: _*),
@@ -2009,13 +2118,10 @@ class Analyzer(override val catalogManager: CatalogManager)
   }
 
   /**
-   * Checks whether a function identifier referenced by an [[UnresolvedFunction]] is defined in the
-   * function registry. Note that this rule doesn't try to resolve the [[UnresolvedFunction]]. It
-   * only performs simple existence check according to the function identifier to quickly identify
-   * undefined functions without triggering relation resolution, which may incur potentially
-   * expensive partition/schema discovery process in some cases.
-   * In order to avoid duplicate external functions lookup, the external function identifier will
-   * store in the local hash set externalFunctionNameSet.
+   * 检查由 [[UnresolvedFunction]] 引用的函数标识符是否已在函数注册表中定义。
+   * 注意，此规则并不会尝试解析 [[UnresolvedFunction]]，它只会根据函数标识符执行简单的存在性检查，从而快速识别未定义的函数，
+   * 而不会触发关系解析过程，因为后者在某些情况下可能会引发代价较高的分区或 schema 发现过程。
+   * 为了避免重复查找外部函数，外部函数标识符将会被存储在本地的哈希集合 externalFunctionNameSet 中。
    * @see [[ResolveFunctions]]
    * @see https://issues.apache.org/jira/browse/SPARK-19737
    */

@@ -38,7 +38,11 @@ import org.apache.spark.sql.util.ExecutionListenerManager
 import org.apache.spark.util.{DependencyUtils, Utils}
 
 /**
- * A class that holds all session-specific state in a given [[SparkSession]].
+ *
+ * hive -> [[org.apache.spark.sql.hive.HiveSessionStateBuilder]]
+ * in-memory -> [[SessionStateBuilder]]
+ *
+ * 一个类，用于保存给定 [[SparkSession]] 中的所有会话特定状态。
  *
  * @param sharedState The state shared across sessions, e.g. global view manager, external catalog.
  * @param conf SQL-specific key-value configurations.
@@ -81,13 +85,19 @@ private[sql] class SessionState(
     val columnarRules: Seq[ColumnarRule],
     val queryStagePrepRules: Seq[Rule[SparkPlan]]) {
 
-  // The following fields are lazy to avoid creating the Hive client when creating SessionState.
+  /**
+   * The following fields are lazy to avoid creating the Hive client when creating SessionState.
+   */
   lazy val catalog: SessionCatalog = catalogBuilder()
 
-  // 分析器
+  /**
+   * 解析器 [[BaseSessionStateBuilder.analyzer]]
+   */
   lazy val analyzer: Analyzer = analyzerBuilder()
 
-  // 优化器
+  /**
+   * 优化器 [[BaseSessionStateBuilder.optimizer]]
+   */
   lazy val optimizer: Optimizer = optimizerBuilder()
 
   lazy val resourceLoader: SessionResourceLoader = resourceLoaderBuilder()
