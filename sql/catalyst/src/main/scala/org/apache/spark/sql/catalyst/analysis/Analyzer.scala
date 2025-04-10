@@ -342,7 +342,8 @@ class Analyzer(override val catalogManager: CatalogManager)
       // 主要用于 ‌处理逻辑计划中与反序列化操作相关的未绑定表达式‌，确保数据从外部格式（如 JSON、Parquet）转换为 Catalyst 内部数据类型时的正确性与一致性。
       // (反序列化器与数据类型绑定, 复杂数据结构的解析支持, 动态 Schema 推断)
       ResolveDeserializer ::
-      // 主要用于 ‌处理逻辑计划中涉及对象实例化的表达式‌，确保新创建的对象实例（如用户自定义类型或复杂数据结构）能够正确绑定到 Catalyst 引擎的数据模型中，并验证其类型与执行逻辑的兼容性‌
+      // 主要用于 ‌处理逻辑计划中涉及对象实例化的表达式‌，确保新创建的对象实例（如用户自定义类型或复杂数据结构）能够正确绑定到 Catalyst 引擎的数据模型中，
+      // 并验证其类型与执行逻辑的兼容性‌
       // (对象实例化表达式的解析, 类型验证与兼容性检查, 复杂类型与自定义类型的支持)
       ResolveNewInstance ::
       // 主要用于 ‌处理表达式中的类型向上转换（UpCast）‌，确保操作数的类型兼容性，并遵循 Catalyst 引擎的类型系统规范
@@ -427,19 +428,67 @@ class Analyzer(override val catalogManager: CatalogManager)
       // 在逻辑计划阶段对 DELETE 操作进行语法适配、优化及底层存储兼容性处理
       // (语法适配与兼容性处理, 逻辑计划重写与优化, 权限与约束校验)
       RewriteDeleteFromTable ::
+      // 类型转换校验与处理
       typeCoercionRules ++
+      // ‌处理公用表表达式（CTE）‌ 的核心规则，其核心功能是在逻辑计划生成阶段完成对 WITH 子句的解析、替换及优化。
+      // (CTE 定义解析与作用域管理, CTE 引用替换策略, 语法与语义校验, 递归CTE支持)
       Seq(ResolveWithCTE) ++
+      /**
+       * 查看 : [[BaseSessionStateBuilder.extendedResolutionRules]]
+       */
       extendedResolutionRules : _*),
 
+    // ‌清理逻辑计划中因解析或转换生成的冗余临时列‌，确保逻辑计划简洁高效，并为后续优化和执行阶段提供干净的输入。
+    // (中间结果清理, 逻辑计划简化, 语义冲突预防)
     Batch("Remove TempResolvedColumn", Once, RemoveTempResolvedColumn),
+
+    // 字符类型填充规则‌，用于在逻辑计划生成过程中优化文本字段的分词逻辑，提升语义解析的准确性
+    // (字符边界优化, 多语言兼容性, 技术实现与场景)
     Batch("Apply Char Padding", Once, ApplyCharTypePadding),
-    Batch("Post-Hoc Resolution", Once, Seq(ResolveCommandsWithIfExists) ++ postHocResolutionRules: _*),
+
+    // 主要用户处理完 Resolution 的后期处理
+    Batch("Post-Hoc Resolution", Once,
+      // 处理带有IF EXISTS或IF NOT EXISTS子句的DDL/DML命令（如DROP TABLE、CREATE TABLE等）。
+      // 其核心功能是‌验证并解析这些条件子句的语义‌，确保命令在元数据操作时能够正确执行，避免因对象不存在或重复创建而引发异常。
+      // (语义验证, 元数据绑定)
+      Seq(ResolveCommandsWithIfExists) ++
+      /**
+       * 查看 : [[BaseSessionStateBuilder.postHocResolutionRules]]
+       */
+      postHocResolutionRules: _*
+    ),
+
+    // 主要用于 ‌清除查询中显式添加的优化提示（Hints）‌，确保执行计划的生成不受外部干预
     Batch("Remove Unresolved Hints", Once, new ResolveHints.RemoveAllHints),
+
+    // ‌处理逻辑计划中的非确定性（Nondeterministic）表达式‌，确保其执行结果的一致性并优化查询性能
+    // (隔离非确定性操作, 保证执行结果确定性, 优化执行效率)
     Batch("Nondeterministic", Once, PullOutNondeterministic),
-    Batch("UDF", Once, HandleNullInputsForUDF, ResolveEncodersInUDF),
+
+    // UDF  处理工作
+    Batch("UDF", Once,
+      // 处理用户定义函数（UDF）对空值（NULL）输入的逻辑兼容性‌，确保 UDF 在遇到 NULL 输入时行为符合预期并避免执行错误
+      // (空值输入隐式处理, 优化UDF执行逻辑, 保障UDF行为可预测性)
+      HandleNullInputsForUDF,
+      // 统一处理用户定义函数（UDF）中涉及的数据类型与编码器（Encoder）的绑定关系‌，确保UDF在序列化/反序列化过程中的类型安全性和执行效率。
+      // (类型与编码器绑定， 优化执行逻辑, 保障类型安全)
+      ResolveEncodersInUDF
+    ),
+
+    // ‌动态更新逻辑计划中属性的可空性（Nullability）信息‌，确保查询优化与执行阶段能够准确处理空值约束，提升查询计划的正确性与执行效率
     Batch("UpdateNullability", Once, UpdateAttributeNullability),
+
+    // 处理逻辑计划中涉及外层作用域（Outer Scope）的列引用绑定问题‌
+    // 确保子查询或嵌套查询中的外部列（Outer References）能够正确关联到父查询的上下文，保障查询语义的完整性和执行计划的准确性。
+    // (绑定外层作用域的列引用, 保障查询语义一致性, 优化执行计划生成)
     Batch("Subquery", Once, UpdateOuterReferences),
+
+    // 清理逻辑计划中冗余或临时生成的别名（Alias）表达式‌，以简化逻辑计划结构并优化后续查询执行效率。
+    // (移除冗余别名, 统一列引用标识, 支持聚合操作简化)
     Batch("Cleanup", fixedPoint, CleanupAliases),
+
+    // 仅分析类指令（Analysis-Only Commands）‌ 的核心模块，其核心功能聚焦于 ‌元数据采集、结构验证与统计信息生成
+    // (执行元数据采集与分析, 处理只读分析指令, 优化后续查询性能)
     Batch("HandleAnalysisOnlyCommand", Once, HandleAnalysisOnlyCommand)
   )
 
