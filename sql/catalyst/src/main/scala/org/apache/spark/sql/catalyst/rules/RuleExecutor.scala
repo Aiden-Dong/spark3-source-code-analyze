@@ -195,7 +195,7 @@ abstract class RuleExecutor[TreeType <: TreeNode[_]] extends Logging {
         this.getClass.getName.stripSuffix("$"))
     }
 
-    // 遍历所有的 batch 规则
+    // 遍历所有的 batch 规则, 每个 batch 内部包含有一组规则
     batches.foreach { batch =>
       val batchStartPlan = curPlan
       var iteration = 1          // 初始化遍历次数
@@ -205,6 +205,7 @@ abstract class RuleExecutor[TreeType <: TreeNode[_]] extends Logging {
       // Run until fix point (or the max number of iterations as specified in the strategy.
       while (continue) {
 
+        // 运算一次当前 batch 中的所有的 role,
         // 将当前 batch 的每个规则应用到 当前的 plan 计划中
         // 从左到右，应用 Role, 并将应用得到的 plan 结果， 在应用到下一个Rules 中， 相当于执行了 reduce
         curPlan = batch.rules.foldLeft(curPlan) {
@@ -218,6 +219,8 @@ abstract class RuleExecutor[TreeType <: TreeNode[_]] extends Logging {
             if (effective) {
               queryExecutionMetrics.incNumEffectiveExecution(rule.ruleName)
               queryExecutionMetrics.incTimeEffectiveExecutionBy(rule.ruleName, runTime)
+
+              // spark.sql.planChangeLog.level  日志打印
               planChangeLogger.logRule(rule.ruleName, plan, result)
             }
 
@@ -260,6 +263,7 @@ abstract class RuleExecutor[TreeType <: TreeNode[_]] extends Logging {
           continue = false
         }
 
+        // 表示两次解析相同，则完成解析跳过本次
         if (curPlan.fastEquals(lastPlan)) {
           logTrace(
             s"Fixed point reached for batch ${batch.name} after ${iteration - 1} iterations.")

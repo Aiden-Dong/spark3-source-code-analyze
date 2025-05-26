@@ -28,128 +28,124 @@ import org.apache.spark.sql.types.StructType;
 import java.util.Map;
 
 /**
- * Catalog methods for working with Tables.
- * <p>
- * TableCatalog implementations may be case sensitive or case insensitive. Spark will pass
- * {@link Identifier table identifiers} without modification. Field names passed to
- * {@link #alterTable(Identifier, TableChange...)} will be normalized to match the case used in the
- * table schema when updating, renaming, or dropping existing columns when catalyst analysis is case
- * insensitive.
+ * 用于操作表的 catalog 方法。
  *
+ * TableCatalog 的实现可以是区分大小写的，也可以是不区分大小写的。
+ * Spark 在传递 {@link Identifier 表标识符} 时不会进行修改。
+ * 当 Catalyst 分析阶段为不区分大小写时，传递给 {@link #alterTable(Identifier, TableChange...)} 的字段名会被标准化，
+ * 以匹配表模式中使用的大小写，用于更新、重命名或删除已有列。
  * @since 3.0.0
  */
 @Evolving
 public interface TableCatalog extends CatalogPlugin {
 
   /**
-   * A reserved property to specify the location of the table. The files of the table
-   * should be under this location.
+   * 用于指定表位置的保留属性。表的数据文件应位于该位置之下。
+   * CREATE TABLE my_table (...)
+   * USING parquet
+   * LOCATION 'hdfs://path/to/table/data';
    */
   String PROP_LOCATION = "location";
 
   /**
-   * A reserved property to indicate that the table location is managed, not user-specified.
-   * If this property is "true", SHOW CREATE TABLE will not generate the LOCATION clause.
+   * 一个保留属性，用于指示表的位置是由系统管理的，而不是用户指定的。
+   * 如果该属性为 "true"，则 SHOW CREATE TABLE 不会生成 LOCATION 子句。
    */
   String PROP_IS_MANAGED_LOCATION = "is_managed_location";
 
   /**
-   * A reserved property to specify a table was created with EXTERNAL.
+   * 一个保留属性，用于指定该表是通过 EXTERNAL 创建的。
    */
   String PROP_EXTERNAL = "external";
 
   /**
-   * A reserved property to specify the description of the table.
+   * 一个保留属性，用于指定该表的描述信息。
    */
   String PROP_COMMENT = "comment";
 
   /**
-   * A reserved property to specify the provider of the table.
+   * 一个保留属性，用于指定该表的提供者（provider）。
    */
   String PROP_PROVIDER = "provider";
 
   /**
-   * A reserved property to specify the owner of the table.
+   * 一个保留属性，用于指定该表的所有者。
    */
   String PROP_OWNER = "owner";
 
   /**
-   * A prefix used to pass OPTIONS in table properties
+   * 用于在表属性中传递 OPTIONS 的前缀。
    */
   String OPTION_PREFIX = "option.";
 
   /**
-   * List the tables in a namespace from the catalog.
+   * 从目录中列出某个命名空间下的所有表。
    * <p>
-   * If the catalog supports views, this must return identifiers for only tables and not views.
+   * 如果目录支持视图，则此方法必须仅返回表的标识符，而不包含视图。
    *
-   * @param namespace a multi-part namespace
-   * @return an array of Identifiers for tables
-   * @throws NoSuchNamespaceException If the namespace does not exist (optional).
+   * @param namespace 多级命名空间
+   * @return 表的 Identifier 数组
+   * @throws NoSuchNamespaceException 如果命名空间不存在（可选抛出）。
    */
   Identifier[] listTables(String[] namespace) throws NoSuchNamespaceException;
 
   /**
-   * Load table metadata by {@link Identifier identifier} from the catalog.
+   * 通过 {@link Identifier} 从目录中加载表的元数据。
    * <p>
-   * If the catalog supports views and contains a view for the identifier and not a table, this
-   * must throw {@link NoSuchTableException}.
+   * 如果目录支持视图，并且对于给定标识符存在的是视图而不是表，则必须抛出 {@link NoSuchTableException}。
    *
-   * @param ident a table identifier
-   * @return the table's metadata
-   * @throws NoSuchTableException If the table doesn't exist or is a view
+   * @param ident 表的标识符
+   * @return 该表的元数据
+   * @throws NoSuchTableException 如果该表不存在，或该标识符对应的是视图
    */
   Table loadTable(Identifier ident) throws NoSuchTableException;
 
   /**
-   * Load table metadata of a specific version by {@link Identifier identifier} from the catalog.
+   * 通过 {@link Identifier} 从目录中加载指定版本的表元数据。
    * <p>
-   * If the catalog supports views and contains a view for the identifier and not a table, this
-   * must throw {@link NoSuchTableException}.
+   * 如果目录支持视图，并且给定标识符对应的是视图而非表，则必须抛出 {@link NoSuchTableException}。
    *
-   * @param ident a table identifier
-   * @param version version of the table
-   * @return the table's metadata
-   * @throws NoSuchTableException If the table doesn't exist or is a view
+   * @param ident 表的标识符
+   * @param version 表的版本号
+   * @return 该版本表的元数据
+   * @throws NoSuchTableException 如果该表不存在或对应的是视图
    */
   default Table loadTable(Identifier ident, String version) throws NoSuchTableException {
     throw QueryCompilationErrors.tableNotSupportTimeTravelError(ident);
   }
 
   /**
-   * Load table metadata at a specific time by {@link Identifier identifier} from the catalog.
+   * 通过 {@link Identifier} 从目录中加载指定时间点的表元数据。
    * <p>
-   * If the catalog supports views and contains a view for the identifier and not a table, this
-   * must throw {@link NoSuchTableException}.
+   * 如果目录支持视图，并且给定标识符对应的是视图而非表，则必须抛出 {@link NoSuchTableException}。
    *
-   * @param ident a table identifier
-   * @param timestamp timestamp of the table, which is microseconds since 1970-01-01 00:00:00 UTC
-   * @return the table's metadata
-   * @throws NoSuchTableException If the table doesn't exist or is a view
+   * @param ident 表的标识符
+   * @param timestamp 表的时间戳，表示自 UTC 1970-01-01 00:00:00 以来的微秒数
+   * @return 该时间点对应的表的元数据
+   * @throws NoSuchTableException 如果该表不存在或对应的是视图
    */
   default Table loadTable(Identifier ident, long timestamp) throws NoSuchTableException {
     throw QueryCompilationErrors.tableNotSupportTimeTravelError(ident);
   }
 
   /**
-   * Invalidate cached table metadata for an {@link Identifier identifier}.
+   * 使指定 {@link Identifier} 表的缓存元数据失效。
    * <p>
-   * If the table is already loaded or cached, drop cached data. If the table does not exist or is
-   * not cached, do nothing. Calling this method should not query remote services.
+   * 如果该表已被加载或缓存，则清除其缓存数据。如果该表不存在或未被缓存，则不执行任何操作。
+   * 调用此方法时不应访问远程服务。
    *
-   * @param ident a table identifier
+   * @param ident 表的标识符
    */
   default void invalidateTable(Identifier ident) {
   }
 
   /**
-   * Test whether a table exists using an {@link Identifier identifier} from the catalog.
+   * 使用目录中的 {@link Identifier} 来测试某个表是否存在。
    * <p>
-   * If the catalog supports views and contains a view for the identifier and not a table, this
-   * must return false.
+   * 如果目录支持视图，并且给定的标识符对应的是视图而不是表，则必须返回 false。
    *
-   * @param ident a table identifier
-   * @return true if the table exists, false otherwise
+   * @param ident 表的标识符
+   * @return 如果表存在则返回 true，否则返回 false
    */
   default boolean tableExists(Identifier ident) {
     try {
@@ -178,50 +174,45 @@ public interface TableCatalog extends CatalogPlugin {
       Map<String, String> properties) throws TableAlreadyExistsException, NoSuchNamespaceException;
 
   /**
-   * Apply a set of {@link TableChange changes} to a table in the catalog.
+   * 对目录中的表应用一组 {@link TableChange} 变更。
    * <p>
-   * Implementations may reject the requested changes. If any change is rejected, none of the
-   * changes should be applied to the table.
+   * 实现可能会拒绝某些请求的变更。如果有任何一个变更被拒绝，则不应对表应用任何变更。
    * <p>
-   * The requested changes must be applied in the order given.
+   * 请求的变更必须按照给定的顺序依次应用。
    * <p>
-   * If the catalog supports views and contains a view for the identifier and not a table, this
-   * must throw {@link NoSuchTableException}.
+   * 如果目录支持视图，并且给定的标识符对应的是视图而不是表，则必须抛出 {@link NoSuchTableException}。
    *
-   * @param ident a table identifier
-   * @param changes changes to apply to the table
-   * @return updated metadata for the table
-   * @throws NoSuchTableException If the table doesn't exist or is a view
-   * @throws IllegalArgumentException If any change is rejected by the implementation.
+   * @param ident 表的标识符
+   * @param changes 要应用于该表的变更集合
+   * @return 更新后的表的元数据
+   * @throws NoSuchTableException 如果该表不存在或对应的是视图
+   * @throws IllegalArgumentException 如果实现拒绝了任何一个变更
    */
   Table alterTable(
       Identifier ident,
       TableChange... changes) throws NoSuchTableException;
 
   /**
-   * Drop a table in the catalog.
+   * 删除目录中的一个表。
    * <p>
-   * If the catalog supports views and contains a view for the identifier and not a table, this
-   * must not drop the view and must return false.
+   * 如果目录支持视图，并且给定的标识符对应的是视图而不是表，则此方法**不得**删除该视图，并且必须返回 false。
    *
-   * @param ident a table identifier
-   * @return true if a table was deleted, false if no table exists for the identifier
+   * @param ident 表的标识符
+   * @return 如果删除了表则返回 true；如果该标识符没有对应的表，则返回 false
    */
   boolean dropTable(Identifier ident);
 
   /**
-   * Drop a table in the catalog and completely remove its data by skipping a trash even if it is
-   * supported.
+   * 从目录中删除一个表，并彻底移除其数据，即使支持回收站（trash），也要跳过它。
    * <p>
-   * If the catalog supports views and contains a view for the identifier and not a table, this
-   * must not drop the view and must return false.
+   * 如果目录支持视图，并且标识符对应的是视图而不是表，则不得删除该视图，并且必须返回 false。
    * <p>
-   * If the catalog supports to purge a table, this method should be overridden.
-   * The default implementation throws {@link UnsupportedOperationException}.
+   * 如果目录支持彻底清除（purge）表，则应该重写此方法。
+   * 默认实现会抛出 {@link UnsupportedOperationException}。
    *
-   * @param ident a table identifier
-   * @return true if a table was deleted, false if no table exists for the identifier
-   * @throws UnsupportedOperationException If table purging is not supported
+   * @param ident 表的标识符
+   * @return 如果成功删除了表，则返回 true；如果该标识符没有对应的表，则返回 false
+   * @throws UnsupportedOperationException 如果不支持表清除操作
    *
    * @since 3.1.0
    */
@@ -230,21 +221,18 @@ public interface TableCatalog extends CatalogPlugin {
   }
 
   /**
-   * Renames a table in the catalog.
+   * 重命名目录中的一个表。
    * <p>
-   * If the catalog supports views and contains a view for the old identifier and not a table, this
-   * throws {@link NoSuchTableException}. Additionally, if the new identifier is a table or a view,
-   * this throws {@link TableAlreadyExistsException}.
+   * 如果目录支持视图，并且旧标识符对应的是视图而不是表，则抛出 {@link NoSuchTableException}。
+   * 此外，如果新标识符已经存在（无论是表还是视图），则抛出 {@link TableAlreadyExistsException}。
    * <p>
-   * If the catalog does not support table renames between namespaces, it throws
-   * {@link UnsupportedOperationException}.
+   * 如果目录不支持跨命名空间重命名表，则抛出 {@link UnsupportedOperationException}。
    *
-   * @param oldIdent the table identifier of the existing table to rename
-   * @param newIdent the new table identifier of the table
-   * @throws NoSuchTableException If the table to rename doesn't exist or is a view
-   * @throws TableAlreadyExistsException If the new table name already exists or is a view
-   * @throws UnsupportedOperationException If the namespaces of old and new identifiers do not
-   *                                       match (optional)
+   * @param oldIdent 要重命名的现有表的标识符
+   * @param newIdent 重命名后的新表标识符
+   * @throws NoSuchTableException 如果要重命名的表不存在或是一个视图
+   * @throws TableAlreadyExistsException 如果新表名已经存在或是一个视图
+   * @throws UnsupportedOperationException 如果旧标识符和新标识符的命名空间不一致（可选）
    */
   void renameTable(Identifier oldIdent, Identifier newIdent)
       throws NoSuchTableException, TableAlreadyExistsException;

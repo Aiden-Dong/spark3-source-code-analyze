@@ -774,8 +774,7 @@ object CatalogTypes {
 }
 
 /**
- * A placeholder for a table relation, which will be replaced by concrete relation like
- * `LogicalRelation` or `HiveTableRelation`, during analysis.
+ * 表关系的占位符，在分析阶段会被具体的关系（例如 `LogicalRelation` 或 `HiveTableRelation`）所替换。
  */
 case class UnresolvedCatalogRelation(
     tableMeta: CatalogTable,

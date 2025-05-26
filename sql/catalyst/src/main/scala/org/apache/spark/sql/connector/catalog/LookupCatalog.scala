@@ -92,13 +92,9 @@ private[sql] trait LookupCatalog extends Logging {
   }
 
   /**
-   * Extract catalog and identifier from a multi-part name with the current catalog if needed.
-   * Catalog name takes precedence over identifier, but for a single-part name, identifier takes
-   * precedence over catalog name.
-   *
-   * Note that, this pattern is used to look up permanent catalog objects like table, view,
-   * function, etc. If you need to look up temp objects like temp view, please do it separately
-   * before calling this pattern, as temp objects don't belong to any catalog.
+   * 从多部分名称中提取catalog和标识符（必要时使用当前catalog). catalog名称优先于identifier，但对于单部分名称，标识符优先于catalog名称。
+   * 注意：此模式用于查找永久catalog 对象（如table、view、function等）。
+   * 如果需要查找临时对象（如临时视图），请在调用此模式之前单独处理，因为临时对象不属于任何catalog。
    */
   object CatalogAndIdentifier {
     import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
@@ -110,15 +106,15 @@ private[sql] trait LookupCatalog extends Logging {
       if (nameParts.length == 1) {
         Some((currentCatalog, Identifier.of(catalogManager.currentNamespace, nameParts.head)))
       } else if (nameParts.head.equalsIgnoreCase(globalTempDB)) {
-        // Conceptually global temp views are in a special reserved catalog. However, the v2 catalog
-        // API does not support view yet, and we have to use v1 commands to deal with global temp
-        // views. To simplify the implementation, we put global temp views in a special namespace
-        // in the session catalog. The special namespace has higher priority during name resolution.
-        // For example, if the name of a custom catalog is the same with `GLOBAL_TEMP_DATABASE`,
-        // this custom catalog can't be accessed.
+
+        // 从概念上讲，全局临时视图属于一个特殊保留catalog。但由于v2 catalog API暂不支持 view，我们仍需使用v1命令处理全局临时视图。
+        // 为简化实现，现将全局临时视图置于会话catalog的特殊namespace中。该特殊namespace在名称解析时具有更高优先级。
+        // 例如：若自定义catalog名称与`GLOBAL_TEMP_DATABASE`相同，则无法访问该自定义catalog。
         Some((catalogManager.v2SessionCatalog, nameParts.asIdentifier))
       } else {
         try {
+          // 基于 CatalogManager 获取catalog 实体
+          // spark_catalog -> catalogManager.v2SessionCatalog
           Some((catalogManager.catalog(nameParts.head), nameParts.tail.asIdentifier))
         } catch {
           case _: CatalogNotFoundException =>

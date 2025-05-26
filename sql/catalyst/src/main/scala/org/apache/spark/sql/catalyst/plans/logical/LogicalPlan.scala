@@ -63,11 +63,9 @@ abstract class LogicalPlan
   def maxRowsPerPartition: Option[Long] = maxRows
 
   /**
-   * Returns true if this expression and all its children have been resolved to a specific schema
-   * and false if it still contains any unresolved placeholders. Implementations of LogicalPlan
-   * can override this (e.g.
-   * [[org.apache.spark.sql.catalyst.analysis.UnresolvedRelation UnresolvedRelation]]
-   * should return `false`).
+   * 如果此表达式及其所有子项都已解析为特定模式，则返回true；
+   * 如果仍包含任何未解析的占位符，则返回false。
+   * LogicalPlan的实现可以覆盖此方法（例如 [[org.apache.spark.sql.catalyst.analysis.UnresolvedRelation]] 应返回false）。
    */
   lazy val resolved: Boolean = expressions.forall(_.resolved) && childrenResolved
 

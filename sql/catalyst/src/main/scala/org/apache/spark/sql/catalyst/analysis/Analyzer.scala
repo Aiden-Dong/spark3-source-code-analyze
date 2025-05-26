@@ -1173,6 +1173,9 @@ class Analyzer(override val catalogManager: CatalogManager)
 
     def apply(plan: LogicalPlan)
         : LogicalPlan = plan.resolveOperatorsUpWithPruning(AlwaysProcess.fn, ruleId) {
+
+      // 标识当前是个 insert as select 语句， 并且所有的 select 已经解析完成
+      // 需要解析识别 insert table
       case i @ InsertIntoStatement(table, _, _, _, _, _) if i.query.resolved =>
         val relation = table match {
           case u: UnresolvedRelation if !u.isStreaming =>
@@ -1338,9 +1341,10 @@ class Analyzer(override val catalogManager: CatalogManager)
         u: UnresolvedRelation,
         timeTravelSpec: Option[TimeTravelSpec] = None): Option[LogicalPlan] = {
 
-      // 优先从当前缓存信息中取出 表信息
+      // 去临时视图中搜索， 判断是否是一个临时视图（默认临时视图 OR 全局临时视图）
       lookupTempView(u.multipartIdentifier, u.isStreaming, timeTravelSpec.isDefined).orElse {
 
+        // expandIdentifier : 补全元信息
         expandIdentifier(u.multipartIdentifier) match {
           case CatalogAndIdentifier(catalog, ident) =>              // 解析 catalog
             val key = catalog.name +: ident.namespace :+ ident.name
@@ -1351,7 +1355,8 @@ class Analyzer(override val catalogManager: CatalogManager)
                 newRelation.copyTagsFrom(multi)
                 newRelation
             }).orElse {
-              val table = CatalogV2Util.loadTable(catalog, ident, timeTravelSpec)   // 加载 Table 信息
+              // 加载 Table 信息 TableCatalog.loadTable
+              val table = CatalogV2Util.loadTable(catalog, ident, timeTravelSpec)
               val loaded = createRelation(catalog, ident, table, u.options, u.isStreaming)
               loaded.foreach(AnalysisContext.get.relationCache.update(key, _))
               loaded
@@ -3940,8 +3945,8 @@ class Analyzer(override val catalogManager: CatalogManager)
 }
 
 /**
- * Removes [[SubqueryAlias]] operators from the plan. Subqueries are only required to provide
- * scoping information for attributes and can be removed once analysis is complete.
+ * 从执行计划中移除 [[SubqueryAlias]] 运算符。
+ * 子查询的作用仅是为属性提供作用域信息，在分析完成后即可移除。
  */
 object EliminateSubqueryAliases extends Rule[LogicalPlan] {
   // This is also called in the beginning of the optimization phase, and as a result

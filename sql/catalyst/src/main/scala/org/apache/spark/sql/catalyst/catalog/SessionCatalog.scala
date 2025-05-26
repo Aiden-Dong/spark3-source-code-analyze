@@ -58,32 +58,36 @@ object SessionCatalog {
  *
  * Spark SQL 中的 Catalog 体系实现以 SessionCatalog 为主体，
  * 通过 SparkSession (Spark 程序入口）提供给外部调用。一般一个 SparkSession 对应一个 SessionCatalog。
- * 本质上， Session Catalog 起到了一个代理的作用，对底层的元数据信息、临时表信息、视图信息和函数 信息进行了封装。
+ * 本质上，Session Catalog 起到了一个代理的作用，对底层的元数据信息、临时表信息、视图信息和函数信息进行了封装。
  * 这个类必须是线程安全的。
  */
 class SessionCatalog(
-    externalCatalogBuilder: () => ExternalCatalog,      // 外部系统 Catalog
-                                                        // 用来管理数据库（Databases）、数据表 （Tables）、数 据分区（Partitions）和函数（Functions）的接口 。
-                                                        // 顾名思义，其目标是与外部系统交互， 并做到上述内容的非临时性存储，同样需要满足线程安全以支持并发访问。
-                                                        // ExternalCatalog 是一个抽象类，定义了上述 4 个方面的功能。
-                                                        // 在 Spark SQL 中，具体 实现有 InMemoryCatalog 和 HiveExternalCatalog 两种。
-                                                        // 前者将上述信息存储在内存中， 一 般用于测试或比较简单的 SQL 处理；后者利用 Hive 元数据库来实现持久化的管理，在生 产环境中广泛应用
-    globalTempViewManagerBuilder: () => GlobalTempViewManager,   // 全局的临时视图管理
-                                                   // 对应 DataFrame 中常用的 createGlobalTemp View 方法，进行跨 Session 的视图管理。
-                                                   // 主要功能依赖一个 mutable 类型的 HashMap 来对视图名和数 据源进行映射，
-                                                   // 其中的 key 是视图名的字符串， value 是视图所对应的 LogicalPlan （一般在创建该视图时生成） 。
-    functionRegistry: FunctionRegistry,            // 函数注册接口
-                                                   // 用来实现对函数的注册 （Register）、查找（Lookup）和 删除（Drop） 等功能。
-                                                   //  一般来讲， FunctionRegistry 的具体实现需要是线程安全的，以支持并发访问。
-                                                   //  在 Spark SQL 中默认实现是 SimpleFunctionRegistry，其中采用 Map 数据结构注册了各种内置的函数。
+    // 外部系统 Catalog
+    // 用来管理数据库（Databases）、数据表 （Tables）、数 据分区（Partitions）和函数（Functions）的接口 。
+    // 顾名思义，其目标是与外部系统交互， 并做到上述内容的非临时性存储，同样需要满足线程安全以支持并发访问。
+    // ExternalCatalog 是一个抽象类，定义了上述 4 个方面的功能。
+    // 在 Spark SQL 中，具体 实现有 InMemoryCatalog 和 HiveExternalCatalog 两种。
+    // 前者将上述信息存储在内存中， 一 般用于测试或比较简单的 SQL 处理；后者利用 Hive 元数据库来实现持久化的管理，在生 产环境中广泛应用
+    externalCatalogBuilder: () => ExternalCatalog,
+    // 全局的临时视图管理
+    // 对应 DataFrame 中常用的 createGlobalTemp View 方法，进行跨 Session 的视图管理。
+    // 主要功能依赖一个 mutable 类型的 HashMap 来对视图名和数 据源进行映射，
+    // 其中的 key 是视图名的字符串， value 是视图所对应的 LogicalPlan （一般在创建该视图时生成） 。
+    globalTempViewManagerBuilder: () => GlobalTempViewManager,
+    // 函数注册接口
+    // 用来实现对函数的注册 （Register）、查找（Lookup）和 删除（Drop） 等功能。
+    // 一般来讲， FunctionRegistry 的具体实现需要是线程安全的，以支持并发访问。
+    // 在 Spark SQL 中默认实现是 SimpleFunctionRegistry，其中采用 Map 数据结构注册了各种内置的函数。
+    functionRegistry: FunctionRegistry,
     tableFunctionRegistry: TableFunctionRegistry,
     hadoopConf: Configuration,
-    parser: ParserInterface,                     // parser为解析器接口。
-                                                 // 在listFunctions(db: String, pattern: String)和lookupRelation(name: TableIdentifier)中被使用，用于对函数和表进行解析。
-
-    functionResourceLoader: FunctionResourceLoader, // 函数资源加载器
-                                                    // 在 SparkSQL 中除内置实现的各种函数外，还 支持用户自定义的函数和 Hive 中的各种函数。
-                                                    //  这些函数往往通过 Jar 包或文件类型提供， FunctionResourceLoader 主要就是用来加载这两种类型的资源以提供函数的调用。
+    // parser为解析器接口.
+    // 在listFunctions(db: String, pattern: String)和lookupRelation(name: TableIdentifier)中被使用，用于对函数和表进行解析
+    parser: ParserInterface,
+    // 函数资源加载器
+    // 在 SparkSQL 中除内置实现的各种函数外，还 支持用户自定义的函数和 Hive 中的各种函数。
+    // 这些函数往往通过 Jar 包或文件类型提供， FunctionResourceLoader 主要就是用来加载这两种类型的资源以提供函数的调用。
+    functionResourceLoader: FunctionResourceLoader,
     functionExpressionBuilder: FunctionExpressionBuilder,
     cacheSize: Int = SQLConf.get.tableRelationCacheSize,
     cacheTTL: Long = SQLConf.get.metadataCacheTTL) extends SQLConfHelper with Logging {

@@ -27,13 +27,10 @@ import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.internal.SQLConf
 
 /**
- * A thread-safe manager for [[CatalogPlugin]]s. It tracks all the registered catalogs, and allow
- * the caller to look up a catalog by name.
- *
- * There are still many commands (e.g. ANALYZE TABLE) that do not support v2 catalog API. They
- * ignore the current catalog and blindly go to the v1 `SessionCatalog`. To avoid tracking current
- * namespace in both `SessionCatalog` and `CatalogManger`, we let `CatalogManager` to set/get
- * current database of `SessionCatalog` when the current catalog is the session catalog.
+ * 一个线程安全的 [[CatalogPlugin]] 管理器。它跟踪所有已注册的catalog，并允许调用方按名称查找catalog。
+ * 目前仍有许多命令（例如 ANALYZE TABLE）不支持 v2 Catalog API。这些命令会忽略当前Catalog， 直接访问 v1 的 SessionCatalog。
+ * 为了避免同时在 SessionCatalog 和 CatalogManager 中 跟踪当前命名空间，我们让 CatalogManager 在当前目录是会话目录时，负责设置/获取
+ * SessionCatalog 的当前数据库。
  */
 // TODO: all commands should look up table from the current catalog. The `SessionCatalog` doesn't
 //       need to track current database at all.
@@ -64,6 +61,7 @@ class CatalogManager(
   }
 
   private def loadV2SessionCatalog(): CatalogPlugin = {
+    // 缺人用户有没有自定义 spark_catalog : spark.sql.catalog.spark_catalog
     Catalogs.load(SESSION_CATALOG_NAME, conf) match {
       case extension: CatalogExtension =>
         extension.setDelegateCatalog(defaultSessionCatalog)
@@ -73,13 +71,11 @@ class CatalogManager(
   }
 
   /**
-   * If the V2_SESSION_CATALOG config is specified, we try to instantiate the user-specified v2
-   * session catalog. Otherwise, return the default session catalog.
+   * 如果指定了 V2_SESSION_CATALOG 配置，我们会尝试实例化用户指定的 V2 Session Catalog, 否则返回默认 Session Catalog。
+   * 该catalog是一个委托给 v1 session catalog 的 v2 catalog。
    *
-   * This catalog is a v2 catalog that delegates to the v1 session catalog. it is used when the
-   * session catalog is responsible for an identifier, but the source requires the v2 catalog API.
-   * This happens when the source implementation extends the v2 TableProvider API and is not listed
-   * in the fallback configuration, spark.sql.sources.useV1SourceList
+   * 当session catalog 负责某个identifier，但数据源要求使用 v2 catalog API 时就会使用它。
+   * 这种情况发生在数据源实现扩展了 v2 TableProvider API 且未被列入回退配置（spark.sql.sources.useV1SourceList）时。
    */
   private[sql] def v2SessionCatalog: CatalogPlugin = {
     conf.getConf(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION).map { _ =>
