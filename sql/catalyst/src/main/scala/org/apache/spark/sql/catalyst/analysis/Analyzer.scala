@@ -1055,18 +1055,18 @@ class Analyzer(override val catalogManager: CatalogManager)
   }
 
   /**
-   * Adds metadata columns to output for child relations when nodes are missing resolved attributes.
+   * 当节点缺少已解析属性时，为子关系（child relations）的输出添加元数据列（metadata columns）。
    *
-   * References to metadata columns are resolved using columns from [[LogicalPlan.metadataOutput]],
-   * but the relation's output does not include the metadata columns until the relation is replaced.
-   * Unless this rule adds metadata to the relation's output, the analyzer will detect that nothing
-   * produces the columns.
+   * 对元数据列的引用是通过 [[LogicalPlan.metadataOutput]] 中的列来解析的，但关系的输出中并不会包含这些元数据列，直到该关系被替换为止。
+   * 如果这个规则没有将元数据列添加到关系的输出中，分析器将检测到没有任何节点生成这些列。
    *
-   * This rule only adds metadata columns when a node is resolved but is missing input from its
-   * children. This ensures that metadata columns are not added to the plan unless they are used. By
-   * checking only resolved nodes, this ensures that * expansion is already done so that metadata
-   * columns are not accidentally selected by *. This rule resolves operators downwards to avoid
-   * projecting away metadata columns prematurely.
+   * 此规则仅在某个节点已解析，但其子节点缺少输入的情况下，才会添加元数据列。这可以确保只有在使用时才会添加元数据列。
+   *
+   * 通过只检查已解析的节点，可以确保 * 展开已经完成，
+   * 避免意外通过 * 选中元数据列。
+   *
+   * 此规则采用**从上往下（downwards）**的方式解析操作符，
+   * 以避免在投影（projection）阶段过早地丢弃掉元数据列。
    */
   object AddMetadataColumns extends Rule[LogicalPlan] {
 
@@ -1966,17 +1966,13 @@ class Analyzer(override val catalogManager: CatalogManager)
   }
 
   /**
-   * In many dialects of SQL it is valid to use ordinal positions in order/sort by and group by
-   * clauses. This rule is to convert ordinal positions to the corresponding expressions in the
-   * select list. This support is introduced in Spark 2.0.
+   * 在许多 SQL 方言中，ORDER BY 和 GROUP BY 子句中使用序号（ordinal positions）是合法的。
+   * 本规则的作用是将这些序号位置转换为 SELECT 列表中对应的表达式。Spark 从 2.0 版本开始支持该特性。
    *
-   * - When the sort references or group by expressions are not integer but foldable expressions,
-   * just ignore them.
-   * - When spark.sql.orderByOrdinal/spark.sql.groupByOrdinal is set to false, ignore the position
-   * numbers too.
-   *
-   * Before the release of Spark 2.0, the literals in order/sort by and group by clauses
-   * have no effect on the results.
+   * 具体行为说明：
+   * 如果 ORDER BY 或 GROUP BY 中引用的表达式不是整数，而是可折叠（foldable）的表达式，就忽略它们；
+   * 如果参数 spark.sql.orderByOrdinal 或 spark.sql.groupByOrdinal 被设置为 false，则也会忽略这些序号；
+   * 在 Spark 2.0 之前，ORDER BY 或 GROUP BY 子句中的字面量值（如数字）不会对查询结果产生任何影响。
    */
   object ResolveOrdinalInOrderByAndGroupBy extends Rule[LogicalPlan] {
     def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsUpWithPruning(
@@ -2829,15 +2825,15 @@ class Analyzer(override val catalogManager: CatalogManager)
   }
 
   /**
-   * Extracts [[Generator]] from the projectList of a [[Project]] operator and creates [[Generate]]
-   * operator under [[Project]].
    *
-   * This rule will throw [[AnalysisException]] for following cases:
-   * 1. [[Generator]] is nested in expressions, e.g. `SELECT explode(list) + 1 FROM tbl`
-   * 2. more than one [[Generator]] is found in projectList,
-   *    e.g. `SELECT explode(list), explode(list) FROM tbl`
-   * 3. [[Generator]] is found in other operators that are not [[Project]] or [[Generate]],
-   *    e.g. `SELECT * FROM tbl SORT BY explode(list)`
+   * 从 [[Project]] 操作符的 projectList 中提取 [[Generator]]，并在 [[Project]] 之下创建 [[Generate]] 操作符。
+   * 此规则在以下几种情况下会抛出 [[AnalysisException]] 异常：
+   *
+   * [[Generator]] 被嵌套在表达式中，例如： SELECT explode(list) + 1 FROM tbl
+   *
+   * 在 projectList 中出现多个 [[Generator]]，例如： SELECT explode(list), explode(list) FROM tbl
+   *
+   * [[Generator]] 出现在不是 [[Project]] 或 [[Generate]] 的其他操作符中，例如： SELECT * FROM tbl SORT BY explode(list)
    */
   object ExtractGenerator extends Rule[LogicalPlan] {
     private def hasGenerator(expr: Expression): Boolean = {
@@ -3468,12 +3464,12 @@ class Analyzer(override val catalogManager: CatalogManager)
   }
 
   /**
-   * Resolves columns of an output table from the data in a logical plan. This rule will:
+   * 从逻辑计划中的数据解析输出表的列。该规则将会执行以下操作：
    *
-   * - Reorder columns when the write is by name
-   * - Insert casts when data types do not match
-   * - Insert aliases when column names do not match
-   * - Detect plans that are not compatible with the output table and throw AnalysisException
+   *  - 当按列名写入数据时，重新排序列
+   *  - 当数据类型不匹配时，插入类型转换（cast）
+   *  - 当列名不匹配时，插入别名（alias）
+   * 检测与输出表不兼容的计划，并抛出 AnalysisException 异常
    */
   object ResolveOutputRelation extends Rule[LogicalPlan] {
     override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsWithPruning(

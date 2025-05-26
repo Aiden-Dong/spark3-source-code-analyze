@@ -23,15 +23,14 @@ import java.util.{Date, Locale}
 
 import scala.collection.immutable.Map
 import scala.reflect.ClassTag
-
 import org.apache.hadoop.conf.{Configurable, Configuration}
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.io.compress.CompressionCodecFactory
 import org.apache.hadoop.mapred._
 import org.apache.hadoop.mapred.lib.CombineFileSplit
 import org.apache.hadoop.mapreduce.TaskType
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
 import org.apache.hadoop.util.ReflectionUtils
-
 import org.apache.spark._
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.broadcast.Broadcast
@@ -108,6 +107,7 @@ class HadoopRDD[K, V](
     sparkContext.clean(initLocalJobConfFuncOpt.get)
   }
 
+
   def this(
       sc: SparkContext,
       conf: JobConf,
@@ -138,6 +138,7 @@ class HadoopRDD[K, V](
   private val ignoreCorruptFiles = sparkContext.conf.get(IGNORE_CORRUPT_FILES)
 
   private val ignoreMissingFiles = sparkContext.conf.get(IGNORE_MISSING_FILES)
+
 
   private val ignoreEmptySplits = sparkContext.conf.get(HADOOP_RDD_IGNORE_EMPTY_SPLITS)
 

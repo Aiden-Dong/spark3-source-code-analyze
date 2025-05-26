@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.trees.TreePattern.UPDATE_FIELDS
 
 
 /**
- * Optimizes [[UpdateFields]] expression chains.
+ * 优化 [[UpdateFields]] 表达式链。
  */
 object OptimizeUpdateFields extends Rule[LogicalPlan] {
   private def canOptimize(names: Seq[String]): Boolean = {

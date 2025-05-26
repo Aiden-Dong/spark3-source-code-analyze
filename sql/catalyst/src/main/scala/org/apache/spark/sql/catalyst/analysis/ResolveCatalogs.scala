@@ -22,8 +22,8 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogPlugin, LookupCatalog}
 
 /**
- * Resolves catalogs from the multi-part identifiers in SQL statements, and convert the statements
- * to the corresponding v2 commands if the resolved catalog is not the session catalog.
+ * 从 SQL 语句中的多段标识符（multi-part identifiers）中解析 catalog，
+ * 并在解析出的 catalog 不是会话 catalog（session catalog）时，将这些语句转换为对应的 V2 命令。
  */
 class ResolveCatalogs(val catalogManager: CatalogManager)
   extends Rule[LogicalPlan] with LookupCatalog {

@@ -39,17 +39,10 @@ import org.apache.spark.sql.internal.SQLConf
 object ResolveHints {
 
   /**
-   * The list of allowed join strategy hints is defined in [[JoinStrategyHint.strategies]], and a
-   * sequence of relation aliases can be specified with a join strategy hint, e.g., "MERGE(a, c)",
-   * "BROADCAST(a)". A join strategy hint plan node will be inserted on top of any relation (that
-   * is not aliased differently), subquery, or common table expression that match the specified
-   * name.
-   *
-   * The hint resolution works by recursively traversing down the query plan to find a relation or
-   * subquery that matches one of the specified relation aliases. The traversal does not go past
-   * beyond any view reference, with clause or subquery alias.
-   *
-   * This rule must happen before common table expressions.
+   * 允许的连接策略提示（join strategy hint）列表在 [[JoinStrategyHint.strategies]] 中定义，
+   * 可以使用连接策略提示指定一组关系别名，例如："MERGE(a, c)"、"BROADCAST(a)"。
+   * 当匹配指定名称的关系（未被重新命名）、子查询或公共表表达式（CTE）时，
+   * 将在其上方插入一个连接策略提示的计划节点（join strategy hint plan node）。
    */
   object ResolveJoinStrategyHints extends Rule[LogicalPlan] {
     private val STRATEGY_HINT_NAMES = JoinStrategyHint.strategies.flatMap(_.hintAliases)
