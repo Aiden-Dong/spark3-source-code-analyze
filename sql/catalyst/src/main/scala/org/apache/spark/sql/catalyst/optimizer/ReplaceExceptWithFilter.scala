@@ -26,19 +26,20 @@ import org.apache.spark.sql.catalyst.trees.TreePattern.EXCEPT
 
 
 /**
- * If one or both of the datasets in the logical [[Except]] operator are purely transformed using
- * [[Filter]], this rule will replace logical [[Except]] operator with a [[Filter]] operator by
- * flipping the filter condition of the right child.
+ * 如果逻辑 [[Except]] 操作符中的一个或两个数据集仅通过 [[Filter]] 进行了转换，
+ * 则此规则会将 [[Except]] 操作符替换为 [[Filter]] 操作符.
+ *
+ *  方法是对右侧子节点的过滤条件取反。
  * {{{
  *   SELECT a1, a2 FROM Tab1 WHERE a2 = 12 EXCEPT SELECT a1, a2 FROM Tab1 WHERE a1 = 5
  *   ==>  SELECT DISTINCT a1, a2 FROM Tab1 WHERE a2 = 12 AND (a1 is null OR a1 <> 5)
  * }}}
  *
- * Note:
- * Before flipping the filter condition of the right node, we should:
- * 1. Combine all it's [[Filter]].
- * 2. Update the attribute references to the left node;
- * 3. Add a Coalesce(condition, False) (to take into account of NULL values in the condition).
+ * 注意：
+ * 在对右侧节点的过滤条件取反之前，应先执行以下操作：
+ * 1. 合并它的所有 [[Filter]] 条件；
+ * 2. 将其中的属性引用更新为左侧节点的属性；
+ * 3. 在条件上添加 Coalesce(condition, False)，以正确处理 NULL 值。
  */
 object ReplaceExceptWithFilter extends Rule[LogicalPlan] {
 

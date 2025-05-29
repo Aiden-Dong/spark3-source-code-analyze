@@ -23,14 +23,11 @@ import org.apache.spark.sql.catalyst.rules._
 import org.apache.spark.sql.catalyst.trees.TreePattern._
 
 /**
- * The rule is applied both normal and AQE Optimizer. It optimizes plan using max rows:
- *   - if the max rows of the child of sort is less than or equal to 1, remove the sort
- *   - if the max rows per partition of the child of local sort is less than or equal to 1,
- *     remove the local sort
- *   - if the max rows of the child of aggregate is less than or equal to 1 and its child and
- *     it's grouping only(include the rewritten distinct plan), convert aggregate to project
- *   - if the max rows of the child of aggregate is less than or equal to 1,
- *     set distinct to false in all aggregate expression
+ * 该规则同时应用于常规优化器和AQE优化器。它基于最大行数对执行计划进行优化：
+ * - 若排序算子子节点的最大行数 ≤ 1，则消除排序操作
+ * - 若本地排序算子每个分区的最大行数 ≤ 1，则消除本地排序
+ * - 若聚合算子子节点的最大行数 ≤ 1 且该子节点仅包含分组操作（包含重写后的去重计划），则将聚合转换为投影
+ * - 若聚合算子子节点的最大行数 ≤ 1，则将聚合表达式中的distinct标志置为false
  */
 object OptimizeOneRowPlan extends Rule[LogicalPlan] {
   override def apply(plan: LogicalPlan): LogicalPlan = {

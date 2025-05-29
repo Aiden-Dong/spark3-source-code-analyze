@@ -41,12 +41,15 @@ import org.apache.spark.util.Utils
 abstract class Optimizer(catalogManager: CatalogManager)
   extends RuleExecutor[LogicalPlan] {
 
-  // Check for structural integrity of the plan in test mode.
-  // Currently we check after the execution of each rule if a plan:
-  // - is still resolved
-  // - only host special expressions in supported operators
-  // - has globally-unique attribute IDs
-  // - optimized plan have same schema with previous plan.
+  /**
+   * 在测试模式下检查计划的结构完整性。
+   *
+   * 当前我们会在每条规则执行后检查计划是否满足以下条件：
+   * - 仍保持解析状态(resolved)
+   * - 仅在支持的运算符中包含特殊表达式
+   * - 具有全局唯一的属性ID
+   * - 优化后的计划与之前计划保持相同schema
+   */
   override protected def isPlanIntegral(
       previousPlan: LogicalPlan,
       currentPlan: LogicalPlan): Boolean = {
@@ -68,16 +71,17 @@ abstract class Optimizer(catalogManager: CatalogManager)
       maxIterationsSetting = SQLConf.OPTIMIZER_MAX_ITERATIONS.key)
 
   /**
-   * Defines the default rule batches in the Optimizer.
+   * 定义优化器(Optimizer)中的默认规则批次。
    *
-   * Implementations of this class should override this method, and [[nonExcludableRules]] if
-   * necessary, instead of [[batches]]. The rule batches that eventually run in the Optimizer,
-   * i.e., returned by [[batches]], will be (defaultBatches - (excludedRules - nonExcludableRules)).
+   * 该类的实现应当重写本方法，如有必要也可以重写[[nonExcludableRules]]方法，
+   * 而不是直接重写[[batches]]方法。最终在优化器中实际运行的规则批次
+   * （即由[[batches]]返回的结果）将是：
+   * (defaultBatches - (excludedRules - nonExcludableRules))
    */
   def defaultBatches: Seq[Batch] = {
     val operatorOptimizationRuleSet =
       Seq(
-        // Operator push down
+        // 算子下推
         PushProjectionThroughUnion,
         ReorderJoin,
         EliminateOuterJoin,
@@ -88,7 +92,8 @@ abstract class Optimizer(catalogManager: CatalogManager)
         LimitPushDownThroughWindow,
         ColumnPruning,
         GenerateOptimization,
-        // Operator combine
+
+        // 算子合并
         CollapseRepartition,
         CollapseProject,
         OptimizeWindowFunctions,
@@ -96,7 +101,8 @@ abstract class Optimizer(catalogManager: CatalogManager)
         CombineFilters,
         EliminateLimits,
         CombineUnions,
-        // Constant folding and strength reduction
+
+        // 常量折叠与强度削减优化
         OptimizeRepartition,
         TransposeWindow,
         NullPropagation,
@@ -132,121 +138,180 @@ abstract class Optimizer(catalogManager: CatalogManager)
         extendedOperatorOptimizationRules
 
     val operatorOptimizationBatch: Seq[Batch] = {
+
+      // 谓词推断前的运算符优化
       Batch("Operator Optimization before Inferring Filters", fixedPoint,
         operatorOptimizationRuleSet: _*) ::
+
+      // 谓词推导
       Batch("Infer Filters", Once,
         InferFiltersFromGenerate,
         InferFiltersFromConstraints) ::
+
+      // 谓词推断前的运算符优化
       Batch("Operator Optimization after Inferring Filters", fixedPoint,
         operatorOptimizationRuleSet: _*) ::
-      // Set strategy to Once to avoid pushing filter every time because we do not change the
-      // join condition.
+
+      // 通过连接下推附加谓词
+      // 策略设为Once（单次执行），因连接条件不变，无需每次重复下推过滤条件
       Batch("Push extra predicate through join", fixedPoint,
         PushExtraPredicateThroughJoin,
         PushDownPredicates) :: Nil
     }
 
     val batches = (Batch("Eliminate Distinct", Once, EliminateDistinct) ::
-    Batch("Finish Analysis", Once, FinishAnalysis) ::
+
+    // 逻辑树最终解释处理
+    Batch("Finish Analysis", Once,
+         FinishAnalysis) ::
+
     //////////////////////////////////////////////////////////////////////////////////////////
-    // Optimizer rules start here
+    // 优化器规则从这里开始
     //////////////////////////////////////////////////////////////////////////////////////////
-    // - Do the first call of CombineUnions before starting the major Optimizer rules,
-    //   since it can reduce the number of iteration and the other rules could add/move
-    //   extra operators between two adjacent Union operators.
-    // - Call CombineUnions again in Batch("Operator Optimizations"),
-    //   since the other rules might make two separate Unions operators adjacent.
-    Batch("Inline CTE", Once, InlineCTE()) ::
+    // - 在主要优化规则执行前，先进行第一次CombineUnions调用，
+    // 因为这可以减少迭代次数，且其他规则可能会在两个相邻的Union操作符之间添加/移动额外的操作符。
+    // - 在"Operator Optimizations"批处理中再次调用CombineUnions，
+    // 因为其他规则可能会使两个独立的Union操作符变为相邻状态。
+    Batch("Inline CTE", Once,
+         InlineCTE()) ::       // 将CTE定义内联到对应的引用中
+
+    // UNION 算子操作
     Batch("Union", Once,
-      RemoveNoopOperators,
-      CombineUnions,
-      RemoveNoopUnion) ::
-    Batch("OptimizeLimitZero", Once, OptimizeLimitZero) ::
-    // Run this once earlier. This might simplify the plan and reduce cost of optimizer.
-    // For example, a query such as Filter(LocalRelation) would go through all the heavy
-    // optimizer rules that are triggered when there is a filter
-    // (e.g. InferFiltersFromConstraints). If we run this batch earlier, the query becomes just
-    // LocalRelation and does not trigger many rules.
-    Batch("LocalRelation early", fixedPoint, ConvertToLocalRelation, PropagateEmptyRelation,
-      // PropagateEmptyRelation can change the nullability of an attribute from nullable to
-      // non-nullable when an empty relation child of a Union is removed
-      UpdateAttributeNullability) ::
+        RemoveNoopOperators,   // 移除无操作算子
+        CombineUnions,         // 将所有相邻的[[Union]]运算符合并为一个[[Union]]。
+        RemoveNoopUnion) ::    // 从 Union 子节点中移除无效的 Union 操作
+
+    // limit 0 算子置空
+    Batch("OptimizeLimitZero", Once,
+        OptimizeLimitZero) ::
+
+    // 提前执行此优化步骤。这可能会简化执行计划并降低优化器开销。
+    // 例如，类似 Filter(LocalRelation) 的查询会触发所有与过滤条件相关的
+    // 重量级优化规则（如InferFiltersFromConstraints）。若我们提前执行此批次优化，
+    // 查询将被简化为LocalRelation，从而避免触发众多优化规则。
+    Batch("LocalRelation early", fixedPoint,
+        ConvertToLocalRelation,
+        PropagateEmptyRelation,
+        // 当删除 Union 的空关系子节点时，PropagateEmptyRelation 可以将属性的可空性从可空更改为非可空
+        UpdateAttributeNullability) ::
+
+    // 拉取相关表达式
     Batch("Pullup Correlated Expressions", Once,
-      OptimizeOneRowRelationSubquery,
-      PullupCorrelatedPredicates) ::
-    // Subquery batch applies the optimizer rules recursively. Therefore, it makes no sense
-    // to enforce idempotence on it and we change this batch from Once to FixedPoint(1).
+        OptimizeOneRowRelationSubquery,
+        PullupCorrelatedPredicates) ::
+
+    // 子查询批处理会递归应用优化规则，因此强制要求其幂等性没有意义，
+    // 我们将该批处理从Once更改为FixedPoint(1)。
     Batch("Subquery", FixedPoint(1), OptimizeSubqueries) ::
+
     Batch("Replace Operators", fixedPoint,
-      RewriteExceptAll,
-      RewriteIntersectAll,
-      ReplaceIntersectWithSemiJoin,
-      ReplaceExceptWithFilter,
-      ReplaceExceptWithAntiJoin,
-      ReplaceDistinctWithAggregate,
-      ReplaceDeduplicateWithAggregate) ::
+        RewriteExceptAll,                        // 使用Union、Aggregate和Generate操作符的组合来替换逻辑上的[[Except]]运算符
+        RewriteIntersectAll,                     // 使用Union、Aggregate和Generate操作符的组合来替代逻辑上的[[Intersect]]运算符
+        ReplaceIntersectWithSemiJoin,            // 将逻辑上的 [[Intersect]] 操作符替换为左半 [[Join]]（Left Semi Join）操作符。
+        ReplaceExceptWithFilter,                 // 如果逻辑 [[Except]] 操作符中的一个或两个数据集仅通过 [[Filter]] 进行了转换，
+                                                 // 则此规则会将 [[Except]] 操作符替换为 [[Filter]] 操作符.
+        ReplaceExceptWithAntiJoin,               // 将逻辑 [[Except]] 操作符替换为左反连接（left-anti [[Join]]）操作符。
+        ReplaceDistinctWithAggregate,            // 将 [[Distinct]] 算子替换为 [[Aggregate]] 算子
+        ReplaceDeduplicateWithAggregate          // 将逻辑上的 [[Deduplicate]] 操作符替换为 [[Aggregate]] 操作符。
+    ) ::
+
+    // [[Aggregate]] 算子处理
     Batch("Aggregate", fixedPoint,
-      RemoveLiteralFromGroupExpressions,
-      RemoveRepetitionFromGroupExpressions) :: Nil ++
-    operatorOptimizationBatch) :+
-    Batch("Clean Up Temporary CTE Info", Once, CleanUpTempCTEInfo) :+
-    // This batch rewrites plans after the operator optimization and
-    // before any batches that depend on stats.
-    Batch("Pre CBO Rules", Once, preCBORules: _*) :+
-    // This batch pushes filters and projections into scan nodes. Before this batch, the logical
-    // plan may contain nodes that do not report stats. Anything that uses stats must run after
-    // this batch.
-    Batch("Early Filter and Projection Push-Down", Once, earlyScanPushDownRules: _*) :+
-    Batch("Update CTE Relation Stats", Once, UpdateCTERelationStats) :+
-    // Since join costs in AQP can change between multiple runs, there is no reason that we have an
-    // idempotence enforcement on this batch. We thus make it FixedPoint(1) instead of Once.
+        RemoveLiteralFromGroupExpressions,               // 从[[Aggregate]]的分组表达式中移除字面量，因为它们对结果没有影响，
+        RemoveRepetitionFromGroupExpressions) :: Nil ++  // 从[[Aggregate]]的分组表达式中移除重复项，因为它们对结果没有影响，
+        operatorOptimizationBatch                        // 谓词推导
+    ) :+
+
+    Batch("Clean Up Temporary CTE Info", Once,
+        CleanUpTempCTEInfo                           // 清理 [[CTERelationDef]] 节点中的临时信息。
+    ) :+
+
+    // 此批处理在算子优化之后、任何依赖于统计信息的批处理之前重写计划
+    Batch("Pre CBO Rules", Once,
+        preCBORules: _*
+    ) :+
+
+    // 此批处理将过滤器和投影下推到扫描节点。在此批处理之前，
+    // 逻辑计划可能包含不报告统计信息的节点。任何依赖统计信息的操作必须在此批处理之后运行。
+    Batch("Early Filter and Projection Push-Down", Once,
+        earlyScanPushDownRules: _*
+    ) :+
+
+    Batch("Update CTE Relation Stats", Once,
+        UpdateCTERelationStats                   // 更新CTE 引用状态
+    ) :+
+
+    // 由于AQP中的JOIN成本可能在多次运行之间发生变化，我们没有理由要求此批处理具备幂等性。
+    // 因此这里使用FixedPoint(1)而非Once。
     Batch("Join Reorder", FixedPoint(1),
-      CostBasedJoinReorder) :+
+        CostBasedJoinReorder
+    ) :+
+
     Batch("Eliminate Sorts", Once,
-      EliminateSorts) :+
+       EliminateSorts
+    ) :+
+
     Batch("Decimal Optimizations", fixedPoint,
-      DecimalAggregates) :+
-    // This batch must run after "Decimal Optimizations", as that one may change the
-    // aggregate distinct column
+        DecimalAggregates                // 通过在未缩放的Long值上执行计算，加速对Decimal的聚合操作。
+    ) :+
+
+    // 此批处理必须在"Decimal 优化"之后运行，因为该优化可能会修改聚合去重列
     Batch("Distinct Aggregate Rewrite", Once,
-      RewriteDistinctAggregates) :+
+        RewriteDistinctAggregates      // 优化带有 [[Aggregate]] 的 [[Distinct]] 操作
+    ) :+
+
     Batch("Object Expressions Optimization", fixedPoint,
-      EliminateMapObjects,
-      CombineTypedFilters,
-      ObjectSerializerPruning,
-      ReassignLambdaVariableID) :+
+        EliminateMapObjects,           // 移除MapObject
+        CombineTypedFilters,           // 将两个相邻的 [[TypedFilter]] 合并为一个
+        ObjectSerializerPruning,       // 从查询计划中移除不必要的对象序列化器
+        ReassignLambdaVariableID       // 为LambdaVariable重新分配基于查询的唯一ID，其原始ID是全局唯一的。
+    ) :+
+
     Batch("LocalRelation", fixedPoint,
-      ConvertToLocalRelation,
-      PropagateEmptyRelation,
-      // PropagateEmptyRelation can change the nullability of an attribute from nullable to
-      // non-nullable when an empty relation child of a Union is removed
-      UpdateAttributeNullability) :+
-    Batch("Optimize One Row Plan", fixedPoint, OptimizeOneRowPlan) :+
-    // The following batch should be executed after batch "Join Reorder" and "LocalRelation".
+        ConvertToLocalRelation,
+        PropagateEmptyRelation,
+        // 当Union操作的空关系子节点被移除时
+      // PropagateEmptyRelation可能会将属性的可空性从nullable改为non-nullable
+        UpdateAttributeNullability
+    ) :+
+
+    Batch("Optimize One Row Plan", fixedPoint,
+      OptimizeOneRowPlan     // 基于行数优化执行计划
+    ) :+
+
+    // 该批处理应在"Join重排"和"LocalRelation"批处理之后执行。
     Batch("Check Cartesian Products", Once,
-      CheckCartesianProducts) :+
+      CheckCartesianProducts        // 检查优化后的计划树中是否存在任意类型连接之间的笛卡尔积
+    ) :+
+
+    // 重写子查询
     Batch("RewriteSubquery", Once,
-      RewritePredicateSubquery,
-      ColumnPruning,
-      CollapseProject,
-      RemoveRedundantAliases,
-      RemoveNoopOperators) :+
+      RewritePredicateSubquery,         // 本规则将谓词子查询重写为左半连接(left semi)/反连接(anti join)
+      ColumnPruning,                    // 列裁剪
+      CollapseProject,                  // [[project]] 合并
+      RemoveRedundantAliases,           // 从查询计划中移除冗余的别名
+      RemoveNoopOperators               // 从查询计划中移除不进行任何修改的无操作算子
+    ) :+
+
     // This batch must be executed after the `RewriteSubquery` batch, which creates joins.
-    Batch("NormalizeFloatingNumbers", Once, NormalizeFloatingNumbers) :+
-    Batch("ReplaceUpdateFieldsExpression", Once, ReplaceUpdateFieldsExpression)
+    Batch("NormalizeFloatingNumbers", Once,
+      NormalizeFloatingNumbers          // 浮点类型处理
+    ) :+
+
+    Batch("ReplaceUpdateFieldsExpression", Once,
+      ReplaceUpdateFieldsExpression     // 将 [[UpdateFields]] 表达式替换为可求值的表达式。
+    )
 
     // remove any batches with no rules. this may happen when subclasses do not add optional rules.
     batches.filter(_.rules.nonEmpty)
   }
 
   /**
-   * Defines rules that cannot be excluded from the Optimizer even if they are specified in
-   * SQL config "excludedRules".
-   *
-   * Implementations of this class can override this method if necessary. The rule batches
-   * that eventually run in the Optimizer, i.e., returned by [[batches]], will be
-   * (defaultBatches - (excludedRules - nonExcludableRules)).
+   * 定义即使被指定在SQL配置"excludedRules"中也不能从优化器排除的规则。
+   * 如有需要，该类的实现可以重写此方法。最终在优化器中运行的规则批次（即通过[[batches]]返回的）
+   * 将是(defaultBatches - (excludedRules - nonExcludableRules))。
    */
+
   def nonExcludableRules: Seq[String] =
     FinishAnalysis.ruleName ::
       RewriteDistinctAggregates.ruleName ::
@@ -268,21 +333,22 @@ abstract class Optimizer(catalogManager: CatalogManager)
    * Apply finish-analysis rules for the entire plan including all subqueries.
    */
   object FinishAnalysis extends Rule[LogicalPlan] {
-    // Technically some of the rules in Finish Analysis are not optimizer rules and belong more
-    // in the analyzer, because they are needed for correctness (e.g. ComputeCurrentTime).
-    // However, because we also use the analyzer to canonicalized queries (for view definition),
-    // we do not eliminate subqueries or compute current time in the analyzer.
+
+    // 从技术上讲，"完成分析"阶段中的某些规则实际上不是优化器规则，而更应该属于分析器范畴，
+    // 因为它们是保证正确性所必需的（例如计算当前时间 ComputeCurrentTime）。
+    // 但由于我们也使用分析器来规范化查询（用于视图定义），
+    // 我们不会在分析器中消除子查询或计算当前时间。
     private val rules = Seq(
-      EliminateResolvedHint,
-      EliminateSubqueryAliases,
-      EliminateView,
-      ReplaceExpressions,
-      RewriteNonCorrelatedExists,
-      PullOutGroupingExpressions,
-      ComputeCurrentTime,
-      ReplaceCurrentLike(catalogManager),
-      SpecialDatetimeValues,
-      RewriteAsOfJoin)
+      EliminateResolvedHint,              // 移除 ResolvedHint 算子
+      EliminateSubqueryAliases,           // 移除 SubqueryAlias 算子
+      EliminateView,                      // 移除 view 算子
+      ReplaceExpressions,                 // 查找并替换所有无法直接求值的[[RuntimeReplaceable]]表达式
+      RewriteNonCorrelatedExists,         // 将非关联的EXISTS子查询重写为使用标量子查询(ScalarSubquery)
+      PullOutGroupingExpressions,         // 本规则确保在优化阶段 [[Aggregate]] 节点不包含复杂分组表达式
+      ComputeCurrentTime,                 // 计算当前日期和时间，以确保在同一个查询中返回一致的结果
+      ReplaceCurrentLike(catalogManager), // 替换当前数据库跟 catalog 占位符
+      SpecialDatetimeValues,              // 特殊时间处理
+      RewriteAsOfJoin)                    // ASOF-JOIN 算子转化
 
     override def apply(plan: LogicalPlan): LogicalPlan = {
       rules.foldLeft(plan) { case (sp, rule) => rule.apply(sp) }
@@ -361,26 +427,26 @@ abstract class Optimizer(catalogManager: CatalogManager)
   def extendedOperatorOptimizationRules: Seq[Rule[LogicalPlan]] = Nil
 
   /**
-   * Override to provide additional rules for early projection and filter pushdown to scans.
+   * 重写以提供额外的规则，用于将投影和过滤条件下推到扫描操作的早期阶段。
    */
   def earlyScanPushDownRules: Seq[Rule[LogicalPlan]] = Nil
 
   /**
-   * Override to provide additional rules for rewriting plans after operator optimization rules and
-   * before any cost-based optimization rules that depend on stats.
+   * 重写以提供额外的规则，用于在算子优化规则之后、任何依赖统计信息的基于成本的优化规则之前对计划进行重写
    */
   def preCBORules: Seq[Rule[LogicalPlan]] = Nil
 
   /**
-   * Returns (defaultBatches - (excludedRules - nonExcludableRules)), the rule batches that
-   * eventually run in the Optimizer.
+   * 返回 (defaultBatches - (excludedRules - nonExcludableRules))，即最终在优化器中运行的规则批次集合。
    *
-   * Implementations of this class should override [[defaultBatches]], and [[nonExcludableRules]]
-   * if necessary, instead of this method.
+   * 该类的实现应该重写 [[defaultBatches]] 方法，如有必要还需重写 [[nonExcludableRules]] 方法，
+   * 而不是直接重写此方法。
    */
   final override def batches: Seq[Batch] = {
+    // spark.sql.optimizer.excludedRules
     val excludedRulesConf =
       SQLConf.get.optimizerExcludedRules.toSeq.flatMap(Utils.stringToSeq)
+
     val excludedRules = excludedRulesConf.filter { ruleName =>
       val nonExcludable = nonExcludableRules.contains(ruleName)
       if (nonExcludable) {
@@ -473,8 +539,8 @@ class SimpleTestOptimizer extends Optimizer(
     new SessionCatalog(new InMemoryCatalog, EmptyFunctionRegistry, EmptyTableFunctionRegistry)))
 
 /**
- * Remove redundant aliases from a query plan. A redundant alias is an alias that does not change
- * the name or metadata of a column, and does not deduplicate it.
+ * 从查询计划中移除冗余的别名。冗余别名是指那些既不改变列名或元数据，
+ * 也不用于去重的别名。
  */
 object RemoveRedundantAliases extends Rule[LogicalPlan] {
 
@@ -586,7 +652,7 @@ object RemoveRedundantAliases extends Rule[LogicalPlan] {
 }
 
 /**
- * Remove no-op operators from the query plan that do not make any modifications.
+ * 从查询计划中移除不进行任何修改的无操作算子。
  */
 object RemoveNoopOperators extends Rule[LogicalPlan] {
 
@@ -615,8 +681,8 @@ object RemoveNoopOperators extends Rule[LogicalPlan] {
 }
 
 /**
- * Smplify the children of `Union` or remove no-op `Union` from the query plan that
- * do not make any modifications to the query.
+ * 简化Union的子节点或从查询计划中移除无操作的Union，
+ * 这些操作不会对查询产生任何实际修改。
  */
 object RemoveNoopUnion extends Rule[LogicalPlan] {
   /**
@@ -804,14 +870,11 @@ object PushProjectionThroughUnion extends Rule[LogicalPlan] with PredicateHelper
 }
 
 /**
- * Attempts to eliminate the reading of unneeded columns from the query plan.
- *
- * Since adding Project before Filter conflicts with PushPredicatesThroughProject, this rule will
- * remove the Project p2 in the following pattern:
- *
- *   p1 @ Project(_, Filter(_, p2 @ Project(_, child))) if p2.outputSet.subsetOf(p2.inputSet)
- *
- * p2 is usually inserted by this rule and useless, p1 could prune the columns anyway.
+ * 尝试消除查询计划中不需要读取的列
+ * 由于在Filter前添加Project会与PushPredicatesThroughProject规则冲突，
+ * 本规则会移除符合以下模式的Project节点p2：
+ *    p1 @ Project(, Filter(, p2 @ Project(_, child)))
+ * 当 p2.outputSet是p2.inputSet的子集时, p2通常由本规则插入且后续无用，因为p1无论如何都可以裁剪这些列
  */
 object ColumnPruning extends Rule[LogicalPlan] {
 
@@ -950,12 +1013,11 @@ object ColumnPruning extends Rule[LogicalPlan] {
 }
 
 /**
- * Combines two [[Project]] operators into one and perform alias substitution,
- * merging the expressions into one single expression for the following cases.
- * 1. When two [[Project]] operators are adjacent.
- * 2. When two [[Project]] operators have LocalLimit/Sample/Repartition operator between them
- *    and the upper project consists of the same number of columns which is equal or aliasing.
- *    `GlobalLimit(LocalLimit)` pattern is also considered.
+ * 合并两个相邻的[[Project]]算子并执行别名替换，
+ * 将表达式合并为单一表达式，适用于以下情况：
+ * - 当两个[[Project]]算子直接相邻时
+ * - 当两个[[Project]]算子之间存在LocalLimit/Sample/Repartition算子，
+ * 且上层Project包含相同数量的列（数量相等或存在别名关系）时,同时考虑GlobalLimit(LocalLimit)模式的情况
  */
 object CollapseProject extends Rule[LogicalPlan] with AliasHelper {
 
@@ -1224,8 +1286,8 @@ object TransposeWindow extends Rule[LogicalPlan] {
 }
 
 /**
- * Infers filters from [[Generate]], such that rows that would have been removed
- * by this [[Generate]] can be removed earlier - before joins and in data sources.
+ * 从[[Generate]]操作推导过滤器条件，使得原本会被该[[Generate]]移除的行
+ * 可以更早地被过滤掉——在join操作和数据源读取之前就被移除。
  */
 object InferFiltersFromGenerate extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan.transformUpWithPruning(
@@ -1233,15 +1295,13 @@ object InferFiltersFromGenerate extends Rule[LogicalPlan] {
     case generate @ Generate(g, _, false, _, _, _) if canInferFilters(g) =>
       assert(g.children.length == 1)
       val input = g.children.head
-      // Generating extra predicates here has overheads/risks:
-      //   - We may evaluate expensive input expressions multiple times.
-      //   - We may infer too many constraints later.
-      //   - The input expression may fail to be evaluated under ANSI mode. If we reorder the
-      //     predicates and evaluate the input expression first, we may fail the query unexpectedly.
-      // To be safe, here we only generate extra predicates if the input is an attribute.
-      // Note that, foldable input is also excluded here, to avoid constant filters like
-      // 'size([1, 2, 3]) > 0'. These do not show up in child's constraints and then the
-      // idempotence will break.
+      // 在此处生成额外的谓词会带来开销和风险：
+      // - 我们可能会多次计算昂贵的输入表达式。
+      // - 后续可能推断出过多约束条件。
+      // - 输入表达式在ANSI模式下可能无法计算。如果重新排序谓词并先计算输入表达式，可能会意外导致查询失败。
+      // 为了安全起见，这里仅当输入是属性时才会生成额外谓词。
+      // 注意，可折叠(foldable)输入也被排除在外，以避免诸如'size([1, 2, 3]) > 0'这样的常量过滤器。
+      // 这些不会出现在子节点的约束条件中，从而导致幂等性被破坏。
       if (input.isInstanceOf[Attribute]) {
         // Exclude child's constraints to guarantee idempotency
         val inferredFilters = ExpressionSet(
@@ -1346,7 +1406,7 @@ object InferFiltersFromConstraints extends Rule[LogicalPlan]
 }
 
 /**
- * Combines all adjacent [[Union]] operators into a single [[Union]].
+ * 将所有相邻的[[Union]]运算符合并为一个[[Union]]。
  */
 object CombineUnions extends Rule[LogicalPlan] {
   import CollapseProject.{buildCleanedProjectList, canCollapseExpressions}
@@ -1438,20 +1498,18 @@ object CombineFilters extends Rule[LogicalPlan] with PredicateHelper {
 }
 
 /**
- * Removes Sort operations if they don't affect the final output ordering.
- * Note that changes in the final output ordering may affect the file size (SPARK-32318).
- * This rule handles the following cases:
- * 1) if the sort order is empty or the sort order does not have any reference
- * 2) if the Sort operator is a local sort and the child is already sorted
- * 3) if there is another Sort operator separated by 0...n Project, Filter, Repartition or
- *    RepartitionByExpression, RebalancePartitions (with deterministic expressions) operators
- * 4) if the Sort operator is within Join separated by 0...n Project, Filter, Repartition or
- *    RepartitionByExpression, RebalancePartitions (with deterministic expressions) operators only
- *    and the Join condition is deterministic
- * 5) if the Sort operator is within GroupBy separated by 0...n Project, Filter, Repartition or
- *    RepartitionByExpression, RebalancePartitions (with deterministic expressions) operators only
- *    and the aggregate function is order irrelevant
- */
+ * 移除不影响最终输出排序的Sort操作。
+ * 注意：最终输出排序的改变可能会影响文件大小(参见SPARK-32318)。
+ * 本规则处理以下情况：
+ *  - 排序顺序为空或排序条件不包含任何列引用
+ *  - Sort操作是本地排序且子节点已有序
+ *  - 存在另一个Sort操作，且两者之间仅间隔 0...n 个 Project、Filter、Repartition 或 RepartitionByExpression、
+ *    RebalancePartitions（使用确定性表达式）算子
+ *  - Sort操作位于Join内部，与Join之间仅间隔 0...n 个 Project、Filter、Repartition 或 RepartitionByExpression、
+ *    RebalancePartitions（使用确定性表达式）算子，且Join条件是确定性的
+ *  - Sort操作位于GroupBy内部，与 GroupBy 之间仅间隔 0...n 个 Project、Filter、Repartition或 RepartitionByExpression、
+ *    RebalancePartitions（使用确定性表达式）算子，且聚合函数与顺序无关
+*/
 object EliminateSorts extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan.transformWithPruning(
     _.containsPattern(SORT))(applyLocally)
@@ -1917,18 +1975,18 @@ object EliminateLimits extends Rule[LogicalPlan] {
 }
 
 /**
- * Check if there any cartesian products between joins of any type in the optimized plan tree.
- * Throw an error if a cartesian product is found without an explicit cross join specified.
- * This rule is effectively disabled if the CROSS_JOINS_ENABLED flag is true.
+ * 检查优化后的计划树中是否存在任意类型连接之间的笛卡尔积。
+ * 如果发现未显式指定CROSS JOIN的笛卡尔积，则抛出错误。
  *
- * This rule must be run AFTER the ReorderJoin rule since the join conditions for each join must be
- * collected before checking if it is a cartesian product. If you have
- * SELECT * from R, S where R.r = S.s,
- * the join between R and S is not a cartesian product and therefore should be allowed.
- * The predicate R.r = S.s is not recognized as a join condition until the ReorderJoin rule.
+ * 若CROSS_JOINS_ENABLED标志为true，则此规则实际上会被禁用。
+ * 该规则必须在ReorderJoin规则之后执行，因为需要先收集每个连接的连接条件，
  *
- * This rule must be run AFTER the batch "LocalRelation", since a join with empty relation should
- * not be a cartesian product.
+ * 然后才能检查是否为笛卡尔积。例如对于查询：
+ *         SELECT * FROM R, S WHERE R.r = S.s
+ * R和S之间的连接不是笛卡尔积，因此应被允许。
+ * 而谓词R.r = S.s只有在ReorderJoin规则处理后才会被识别为连接条件。
+ * 该规则必须在"LocalRelation"批处理之后执行，因为与空关系的连接
+ * 不应被视为笛卡尔积。
  */
 object CheckCartesianProducts extends Rule[LogicalPlan] with PredicateHelper {
   /**
@@ -1956,10 +2014,9 @@ object CheckCartesianProducts extends Rule[LogicalPlan] with PredicateHelper {
 }
 
 /**
- * Speeds up aggregates on fixed-precision decimals by executing them on unscaled Long values.
- *
- * This uses the same rules for increasing the precision and scale of the output as
- * [[org.apache.spark.sql.catalyst.analysis.DecimalPrecision]].
+ * 通过在未缩放的Long值上执行计算，加速对Decimal的聚合操作。
+ * 其输出结果的精度和小数位数扩展规则与
+ * [[org.apache.spark.sql.catalyst.analysis.DecimalPrecision]] 的实现逻辑相同。
  */
 object DecimalAggregates extends Rule[LogicalPlan] {
   import Decimal.MAX_LONG_DIGITS
@@ -2002,8 +2059,7 @@ object DecimalAggregates extends Rule[LogicalPlan] {
 }
 
 /**
- * Converts local operations (i.e. ones that don't require data exchange) on `LocalRelation` to
- * another `LocalRelation`.
+ * 将 LocalRelation 上的本地操作（即不需要数据交换的操作）转换为另一个 LocalRelation。
  */
 object ConvertToLocalRelation extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan.transformWithPruning(
@@ -2043,7 +2099,7 @@ object ReplaceDistinctWithAggregate extends Rule[LogicalPlan] {
 }
 
 /**
- * Replaces logical [[Deduplicate]] operator with an [[Aggregate]] operator.
+ * 将逻辑上的 [[Deduplicate]] 操作符替换为 [[Aggregate]] 操作符。
  */
 object ReplaceDeduplicateWithAggregate extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan transformUpWithNewOutput {
@@ -2069,16 +2125,16 @@ object ReplaceDeduplicateWithAggregate extends Rule[LogicalPlan] {
 }
 
 /**
- * Replaces logical [[Intersect]] operator with a left-semi [[Join]] operator.
+ * 将逻辑上的 [[Intersect]] 操作符替换为左半 [[Join]]（Left Semi Join）操作符。
+ *
  * {{{
  *   SELECT a1, a2 FROM Tab1 INTERSECT SELECT b1, b2 FROM Tab2
  *   ==>  SELECT DISTINCT a1, a2 FROM Tab1 LEFT SEMI JOIN Tab2 ON a1<=>b1 AND a2<=>b2
  * }}}
  *
  * Note:
- * 1. This rule is only applicable to INTERSECT DISTINCT. Do not use it for INTERSECT ALL.
- * 2. This rule has to be done after de-duplicating the attributes; otherwise, the generated
- *    join conditions will be incorrect.
+ *  1. 此规则仅适用于 INTERSECT DISTINCT，不适用于 INTERSECT ALL。
+ *  2. 此规则必须在属性去重（de-duplicate）之后执行，否则生成的 join 条件将不正确。
  */
 object ReplaceIntersectWithSemiJoin extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan.transformWithPruning(
@@ -2091,16 +2147,15 @@ object ReplaceIntersectWithSemiJoin extends Rule[LogicalPlan] {
 }
 
 /**
- * Replaces logical [[Except]] operator with a left-anti [[Join]] operator.
+ *  将逻辑 [[Except]] 操作符替换为左反连接（left-anti [[Join]]）操作符。
  * {{{
  *   SELECT a1, a2 FROM Tab1 EXCEPT SELECT b1, b2 FROM Tab2
  *   ==>  SELECT DISTINCT a1, a2 FROM Tab1 LEFT ANTI JOIN Tab2 ON a1<=>b1 AND a2<=>b2
  * }}}
  *
  * Note:
- * 1. This rule is only applicable to EXCEPT DISTINCT. Do not use it for EXCEPT ALL.
- * 2. This rule has to be done after de-duplicating the attributes; otherwise, the generated
- *    join conditions will be incorrect.
+ * 1. 此规则仅适用于 EXCEPT DISTINCT，不适用于 EXCEPT ALL。
+ * 2. 必须在属性去重（de-duplicate）之后执行此规则，否则生成的连接条件将不正确。
  */
 object ReplaceExceptWithAntiJoin extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan.transformWithPruning(
@@ -2113,8 +2168,7 @@ object ReplaceExceptWithAntiJoin extends Rule[LogicalPlan] {
 }
 
 /**
- * Replaces logical [[Except]] operator using a combination of Union, Aggregate
- * and Generate operator.
+ * 使用Union、Aggregate和Generate操作符的组合来替换逻辑上的[[Except]]运算符
  *
  * Input Query :
  * {{{
@@ -2172,8 +2226,7 @@ object RewriteExceptAll extends Rule[LogicalPlan] {
 }
 
 /**
- * Replaces logical [[Intersect]] operator using a combination of Union, Aggregate
- * and Generate operator.
+ * 使用Union、Aggregate和Generate操作符的组合来替代逻辑上的[[Intersect]]运算符
  *
  * Input Query :
  * {{{
@@ -2251,8 +2304,8 @@ object RewriteIntersectAll extends Rule[LogicalPlan] {
 }
 
 /**
- * Removes literals from group expressions in [[Aggregate]], as they have no effect to the result
- * but only makes the grouping key bigger.
+ * 从[[Aggregate]]的分组表达式中移除字面量，因为它们对结果没有影响，
+ * 只会使分组键变得更大。
  */
 object RemoveLiteralFromGroupExpressions extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan.transformWithPruning(
@@ -2307,8 +2360,8 @@ object GenerateOptimization extends Rule[LogicalPlan] {
 }
 
 /**
- * Removes repetition from group expressions in [[Aggregate]], as they have no effect to the result
- * but only makes the grouping key bigger.
+ * 从[[Aggregate]]的分组表达式中移除重复项，因为它们对结果没有影响，
+ * 只会使分组键变得更大。
  */
 object RemoveRepetitionFromGroupExpressions extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan.transformWithPruning(
@@ -2324,8 +2377,7 @@ object RemoveRepetitionFromGroupExpressions extends Rule[LogicalPlan] {
 }
 
 /**
- * Replaces GlobalLimit 0 and LocalLimit 0 nodes (subtree) with empty Local Relation, as they don't
- * return any rows.
+ * 将GlobalLimit 0 和LocalLimit 0节点（子树）替换为空LocalRelation，因为它们不会返回任何数据行。
  */
 object OptimizeLimitZero extends Rule[LogicalPlan] {
   // returns empty Local Relation corresponding to given plan

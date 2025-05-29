@@ -21,8 +21,8 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 
 /**
- * Replaces [[ResolvedHint]] operators from the plan. Move the [[HintInfo]] to associated [[Join]]
- * operators, otherwise remove it if no [[Join]] operator is matched.
+ * 从执行计划中移除[[ResolvedHint]]算子。将[[HintInfo]]转移到相关联的[[Join]]算子上，
+ * 若未能匹配到[[Join]]算子则直接移除提示信息。
  */
 object EliminateResolvedHint extends Rule[LogicalPlan] {
 

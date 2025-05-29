@@ -77,7 +77,7 @@ object OptimizeUpdateFields extends Rule[LogicalPlan] {
 }
 
 /**
- * Replaces [[UpdateFields]] expression with an evaluable expression.
+ * 将 [[UpdateFields]] 表达式替换为可求值的表达式。
  */
 object ReplaceUpdateFieldsExpression extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan.transformAllExpressionsWithPruning(

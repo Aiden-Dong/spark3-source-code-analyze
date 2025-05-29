@@ -93,8 +93,8 @@ class QueryExecution(
 
   /**
    * 提前执行命令，或者是立刻执行命令
-   *  LogicalPlan.transformDown  是一个自顶向下的（需要优先处理父节点） 它的核心功能是遍历并修改逻辑计划的结构
-   * transformDown	自顶向下	需要优先处理父节点（如谓词下推）
+   *  LogicalPlan.transformDown  是一个自顶向下的（需要优先处理父节点）它的核心功能是遍历并修改逻辑计划的结构
+   *  transformDown	自顶向下	需要优先处理父节点（如谓词下推）
    *  transformUp	自底向上	需要子节点处理完毕后再处理父节点（如列剪裁）
    */
   private def eagerlyExecuteCommands(p: LogicalPlan) = p transformDown {

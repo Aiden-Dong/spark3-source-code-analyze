@@ -23,13 +23,12 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.AlwaysProcess
 
 /**
- * Updates nullability of Attributes in a resolved LogicalPlan by using the nullability of
- * corresponding Attributes of its children output Attributes. This step is needed because
- * users can use a resolved AttributeReference in the Dataset API and outer joins
- * can change the nullability of an AttributeReference. Without this rule, a nullable column's
- * nullable field can be actually set as non-nullable, which cause illegal optimization
- * (e.g., NULL propagation) and wrong answers.
- * See SPARK-13484 and SPARK-13801 for the concrete queries of this case.
+ * 通过使用子节点输出属性中对应属性的可空性，更新已解析LogicalPlan中属性的可空性。
+ * 此步骤是必要的，因为用户可以在Dataset API中使用已解析的AttributeReference，
+ * 而外连接操作可能会改变AttributeReference的可空性。
+ * 若没有此规则，原本可为空的列可能被错误标记为不可为空，从而导致非法优化（如NULL传播）
+ * 并产生错误结果。
+ * 具体案例请参阅SPARK-13484和SPARK-13801中的查询示例。
  */
 object UpdateAttributeNullability extends Rule[LogicalPlan] {
 

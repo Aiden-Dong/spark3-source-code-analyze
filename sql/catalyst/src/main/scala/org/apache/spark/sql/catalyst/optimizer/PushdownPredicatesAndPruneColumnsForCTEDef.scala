@@ -163,8 +163,8 @@ object PushdownPredicatesAndPruneColumnsForCTEDef extends Rule[LogicalPlan] {
 }
 
 /**
- * Clean up temporary info from [[CTERelationDef]] nodes. This rule should be called after all
- * iterations of [[PushdownPredicatesAndPruneColumnsForCTEDef]] are done.
+ * 清理 [[CTERelationDef]] 节点中的临时信息。
+ * 此规则应在所有 [[PushdownPredicatesAndPruneColumnsForCTEDef]] 迭代完成后调用。
  */
 object CleanUpTempCTEInfo extends Rule[LogicalPlan] {
   override def apply(plan: LogicalPlan): LogicalPlan =

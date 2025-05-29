@@ -302,10 +302,9 @@ abstract class BaseSessionStateBuilder(
   protected def customEarlyScanPushDownRules: Seq[Rule[LogicalPlan]] = Nil
 
   /**
-   * Custom rules for rewriting plans after operator optimization and before CBO.
-   * Prefer overriding this instead of creating your own Optimizer.
-   *
-   * Note that this may NOT depend on the `optimizer` function.
+   * 用于在算子优化之后、基于成本的优化（CBO）之前重写计划的定制规则。
+   * 建议优先重写此方法而非创建自己的优化器。
+   * 注意：此规则不得依赖于optimizer函数。
    */
   protected def customPreCBORules: Seq[Rule[LogicalPlan]] = {
     extensions.buildPreCBORules(session)

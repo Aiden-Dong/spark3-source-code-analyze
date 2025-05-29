@@ -206,7 +206,7 @@ abstract class PropagateEmptyRelationBase extends Rule[LogicalPlan] with CastSup
 }
 
 /**
- * This rule runs in the normal optimizer
+ * 该规则在常规优化器中运行
  */
 object PropagateEmptyRelation extends PropagateEmptyRelationBase {
   override protected def applyInternal(p: LogicalPlan): LogicalPlan = p.transformUpWithPruning(

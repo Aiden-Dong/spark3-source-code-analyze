@@ -27,17 +27,16 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.{CTE, PLAN_EXPRESSION}
 
 /**
- * Inlines CTE definitions into corresponding references if either of the conditions satisfies:
- * 1. The CTE definition does not contain any non-deterministic expressions or contains attribute
- *    references to an outer query. If this CTE definition references another CTE definition that
- *    has non-deterministic expressions, it is still OK to inline the current CTE definition.
- * 2. The CTE definition is only referenced once throughout the main query and all the subqueries.
+ * 如果满足以下任一条件，将CTE定义内联到对应的引用中：
  *
- * CTE definitions that appear in subqueries and are not inlined will be pulled up to the main
- * query level.
+ *  - CTE 定义不包含任何非确定性表达式，或包含对外部查询的属性引用。
+ *  - 即使该 CTE 定义引用了另一个含有非确定性表达式的 CTE 定义，仍然可以内联当前CTE定义。
  *
- * @param alwaysInline if true, inline all CTEs in the query plan.
+ *  CTE定义在整个主查询及所有子查询中仅被引用一次。出现在子查询中且未被内联的CTE定义将被提升到主查询层级。
+ *
+ *  @param alwaysInline 如果为true，则内联查询计划中的所有CTE。
  */
+
 case class InlineCTE(alwaysInline: Boolean = false) extends Rule[LogicalPlan] {
 
   override def apply(plan: LogicalPlan): LogicalPlan = {

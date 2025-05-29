@@ -25,9 +25,9 @@ import org.apache.spark.sql.catalyst.trees.TreePattern.AGGREGATE
 import org.apache.spark.sql.types.IntegerType
 
 /**
- * This rule rewrites an aggregate query with distinct aggregations into an expanded double
- * aggregation in which the regular aggregation expressions and every distinct clause is aggregated
- * in a separate group. The results are then combined in a second aggregate.
+ * 本规则将带有去重聚合的聚合查询重写为扩展的双重聚合*
+ * 其中常规聚合表达式和每个去重子句分别在独立的组中进行聚合*
+ * 最终在第二次聚合中将结果合并*
  *
  * First example: query without filter clauses (in scala):
  * {{{
@@ -162,38 +162,31 @@ import org.apache.spark.sql.types.IntegerType
  *       LocalTableScan [...]
  * }}}
  *
- * The rule does the following things here:
- * 1. Expand the data. There are three aggregation groups in this query:
- *    i. the non-distinct group;
- *    ii. the distinct 'cat1 group;
- *    iii. the distinct 'cat2 group.
- *    An expand operator is inserted to expand the child data for each group. The expand will null
- *    out all unused columns for the given group; this must be done in order to ensure correctness
- *    later on. Groups can by identified by a group id (gid) column added by the expand operator.
- *    If distinct group exists filter clause, the expand will calculate the filter and output it's
- *    result (e.g. cond1) which will be used to calculate the global conditions (e.g. max_cond1)
- *    equivalent to filter clauses.
- * 2. De-duplicate the distinct paths and aggregate the non-aggregate path. The group by clause of
- *    this aggregate consists of the original group by clause, all the requested distinct columns
- *    and the group id. Both de-duplication of distinct column and the aggregation of the
- *    non-distinct group take advantage of the fact that we group by the group id (gid) and that we
- *    have nulled out all non-relevant columns the given group. If distinct group exists filter
- *    clause, we will use max to aggregate the results (e.g. cond1) of the filter output in the
- *    previous step. These aggregate will output the global conditions (e.g. max_cond1) equivalent
- *    to filter clauses.
- * 3. Aggregating the distinct groups and combining this with the results of the non-distinct
- *    aggregation. In this step we use the group id and the global condition to filter the inputs
- *    for the aggregate functions. If the global condition (e.g. max_cond1) is true, it means at
- *    least one row of a distinct value satisfies the filter. This distinct value should be included
- *    in the aggregate function. The result of the non-distinct group are 'aggregated' by using
- *    the first operator, it might be more elegant to use the native UDAF merge mechanism for this
- *    in the future.
+ * 本规则实现步骤如下：
+ * 数据扩展阶段：
+ * 查询中存在三个聚合组：
+ *   i. 非去重组
+ *   ii. 'cat1去重组
+ *   iii. 'cat2去重组
  *
- * This rule duplicates the input data by two or more times (# distinct groups + an optional
- * non-distinct group). This will put quite a bit of memory pressure of the used aggregate and
- * exchange operators. Keeping the number of distinct groups as low as possible should be priority,
- * we could improve this in the current rule by applying more advanced expression canonicalization
- * techniques.
+ *  通过插入扩展运算符(expand)为每个组复制子数据。扩展操作会将当前组未使用的列置为NULL，
+ *  这对后续计算的正确性至关重要。扩展运算符会添加组标识列(gid)来区分不同组。
+ *  若去重组包含过滤条件，扩展操作会计算过滤结果（如cond1），该结果将用于后续计算与过滤子句等效的全局条件（如max_cond1）。
+ *
+ *  - 去重与非聚合路径处理：
+ *  本阶段聚合的GROUP BY子句包含：原始分组列、所有去重列及组ID(gid)。
+ *  通过利用gid分组和NULL化非相关列的特性，同时实现去重列的去重和非去重组的聚合。
+ *  若去重组存在过滤条件，使用max聚合上一步的过滤输出结果（如cond1），生成与过滤子句等效的全局条件（如max_cond1）。
+ *
+ *  - 合并聚合结果：
+ *  使用组ID和全局条件筛选聚合函数的输入数据。当全局条件（如max_cond1）为真时，
+ *  表示至少有一条去重值记录满足过滤条件，该去重值应纳入聚合计算。
+ *  非去重组的聚合结果通过first运算符合并，未来可采用更优雅的原生UDAF合并机制。
+ *
+ *  注意事项：
+ *  本规则会使输入数据复制2次或更多（去重组数量+可选的非去重组），
+ *  这将给聚合运算符和交换运算符带来较大内存压力。应尽可能减少去重组的数量，
+ *  当前规则可通过应用更高级的表达式规范化技术进行优化。
  */
 object RewriteDistinctAggregates extends Rule[LogicalPlan] {
 

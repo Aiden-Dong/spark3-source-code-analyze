@@ -240,6 +240,7 @@ trait AnalysisHelper extends QueryPlan[LogicalPlan] { self: LogicalPlan =>
   }
 
   /**
+   * 能同时处理 Operator 跟 Expression
    * 在分析器中，应使用[[resolveOperatorsDown()]]替代本方法。若在分析器中调用本方法，
    * 测试模式下将抛出异常。但在[[resolveOperatorsDown()]]调用范围内使用本方法是允许的。
    *

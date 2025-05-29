@@ -26,33 +26,24 @@ import org.apache.spark.sql.catalyst.trees.TreePattern._
 import org.apache.spark.sql.types._
 
 /**
- * We need to take care of special floating numbers (NaN and -0.0) in several places:
- *   1. When compare values, different NaNs should be treated as same, `-0.0` and `0.0` should be
- *      treated as same.
- *   2. In aggregate grouping keys, different NaNs should belong to the same group, -0.0 and 0.0
- *      should belong to the same group.
- *   3. In join keys, different NaNs should be treated as same, `-0.0` and `0.0` should be
- *      treated as same.
- *   4. In window partition keys, different NaNs should belong to the same partition, -0.0 and 0.0
- *      should belong to the same partition.
+ * 我们需要在多个地方处理特殊的浮点数（NaN 和 -0.0）：
+ *  - 当比较值时，不同的 NaN 应被视为相同，-0.0 和 0.0 也应被视为相同。
+ *  - 在聚合分组键中，不同的 NaN 应属于同一组，-0.0 和 0.0 应属于同一组。
+ *  - 在连接键中，不同的 NaN 应被视为相同，-0.0 和 0.0 也应被视为相同。
+ *  - 在窗口分区键中，不同的 NaN 应属于同一个分区，-0.0 和 0.0 也应属于同一个分区。
  *
- * Case 1 is fine, as we handle NaN and -0.0 well during comparison. For complex types, we
- * recursively compare the fields/elements, so it's also fine.
+ * 情况 1 没有问题，因为我们在比较时已经很好地处理了 NaN 和 -0.0。对于复杂类型，我们递归地比较字段/元素，所以也没有问题。
  *
- * Case 2, 3 and 4 are problematic, as Spark SQL turns grouping/join/window partition keys into
- * binary `UnsafeRow` and compare the binary data directly. Different NaNs have different binary
- * representation, and the same thing happens for -0.0 and 0.0.
+ * 情况 2、3 和 4 存在问题，因为 Spark SQL 会将分组/连接/窗口分区键转换为二进制 UnsafeRow 并直接比较二进制数据。
+ * 不同的 NaN 具有不同的二进制表示，-0.0 和 0.0 同样如此。
  *
- * This rule normalizes NaN and -0.0 in window partition keys, join keys and aggregate grouping
- * keys.
+ * 本规则对窗口分区键、连接键和聚合分组键中的 NaN 和 -0.0 进行标准化处理。
  *
- * Ideally we should do the normalization in the physical operators that compare the
- * binary `UnsafeRow` directly. We don't need this normalization if the Spark SQL execution engine
- * is not optimized to run on binary data. This rule is created to simplify the implementation, so
- * that we have a single place to do normalization, which is more maintainable.
+ * 理想情况下，我们应该在物理运算符中对二进制 UnsafeRow 的直接比较进行标准化处理。
+ * 如果 Spark SQL 执行引擎没有针对二进制数据进行优化，就不需要这种标准化。
+ * 创建此规则是为了简化实现，使我们可以在一个统一的地方进行标准化，从而更易于维护。
  *
- * Note that, this rule must be executed at the end of optimizer, because the optimizer may create
- * new joins(the subquery rewrite) and new join conditions(the join reorder).
+ * 请注意，此规则必须在优化器的最后阶段执行，因为优化器可能会创建新的连接（子查询重写）和新的连接条件（连接重排序）。
  */
 object NormalizeFloatingNumbers extends Rule[LogicalPlan] {
 

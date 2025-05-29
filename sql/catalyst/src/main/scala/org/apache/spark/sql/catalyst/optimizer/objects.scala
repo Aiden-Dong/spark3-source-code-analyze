@@ -70,8 +70,8 @@ object EliminateSerialization extends Rule[LogicalPlan] {
 }
 
 /**
- * Combines two adjacent [[TypedFilter]]s, which operate on same type object in condition, into one,
- * merging the filter functions into one conjunctive function.
+ * 将两个相邻的 [[TypedFilter]] 合并为一个，这两个过滤器操作相同类型的对象，
+ * 并将过滤函数合并为一个联合函数。
  */
 object CombineTypedFilters extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan.transformWithPruning(
@@ -105,10 +105,10 @@ object CombineTypedFilters extends Rule[LogicalPlan] {
 }
 
 /**
- * Removes MapObjects when the following conditions are satisfied
- *   1. Mapobject(... lambdavariable(..., false) ...), which means types for input and output
- *      are primitive types with non-nullable
- *   2. no custom collection class specified representation of data item.
+ * 当满足以下条件时移除MapObjects:
+ *   1. MapObject(... lambdavariable(..., false) ...)，表示输入和输出类型
+ *      是基本类型且不可为null
+ *   2. 未指定自定义集合类的数据项表示形式
  */
 object EliminateMapObjects extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan.transformAllExpressionsWithPruning(
@@ -118,8 +118,8 @@ object EliminateMapObjects extends Rule[LogicalPlan] {
 }
 
 /**
- * Prunes unnecessary object serializers from query plan. This rule prunes both individual
- * serializer and nested fields in serializers.
+ * 从查询计划中移除不必要的对象序列化器。该规则既会移除独立的序列化器，
+ * 也会移除序列化器中的嵌套字段。
  */
 object ObjectSerializerPruning extends Rule[LogicalPlan] {
 
@@ -242,8 +242,8 @@ object ObjectSerializerPruning extends Rule[LogicalPlan] {
 }
 
 /**
- * Reassigns per-query unique IDs to `LambdaVariable`s, whose original IDs are globally unique. This
- * can help Spark to hit codegen cache more often and improve performance.
+ * 为LambdaVariable重新分配基于查询的唯一ID，其原始ID是全局唯一的。
+ * 这有助于Spark更频繁命中代码生成缓存，从而提高性能。
  */
 object ReassignLambdaVariableID extends Rule[LogicalPlan] {
   override def apply(plan: LogicalPlan): LogicalPlan = {

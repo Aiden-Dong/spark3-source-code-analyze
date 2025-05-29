@@ -28,11 +28,9 @@ import org.apache.spark.sql.execution.datasources.DataSourceStrategy
 import org.apache.spark.sql.sources
 
 /**
- * A rule that replaces a rewritten DELETE operation with a delete using filters if the data source
- * can handle this DELETE command without executing the plan that operates on individual or groups
- * of rows.
- *
- * Note this rule must be run after expression optimization but before scan planning.
+ * 该规则用于将重写后的DELETE操作替换为使用过滤条件的删除操作，
+ * 前提是数据源能够在不执行针对单行或行组的操作计划的情况下处理此DELETE命令。
+ * 注意：此规则必须在表达式优化之后、扫描计划生成之前执行。
  */
 object OptimizeMetadataOnlyDeleteFromTable extends Rule[LogicalPlan] with PredicateHelper {
 

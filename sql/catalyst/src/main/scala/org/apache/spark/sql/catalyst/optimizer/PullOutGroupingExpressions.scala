@@ -26,24 +26,18 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.AGGREGATE
 
 /**
- * This rule ensures that [[Aggregate]] nodes doesn't contain complex grouping expressions in the
- * optimization phase.
- *
- * Complex grouping expressions are pulled out to a [[Project]] node under [[Aggregate]] and are
- * referenced in both grouping expressions and aggregate expressions without aggregate functions.
- * These references ensure that optimization rules don't change the aggregate expressions to invalid
- * ones that no longer refer to any grouping expressions and also simplify the expression
- * transformations on the node (need to transform the expression only once).
- *
- * For example, in the following query Spark shouldn't optimize the aggregate expression
- * `Not(IsNull(c))` to `IsNotNull(c)` as the grouping expression is `IsNull(c)`:
- * SELECT not(c IS NULL)
- * FROM t
- * GROUP BY c IS NULL
- * Instead, the aggregate expression references a `_groupingexpression` attribute:
+ * 本规则确保在优化阶段 [[Aggregate]] 节点不包含复杂分组表达式
+ * 复杂分组表达式会被提取到[[Aggregate]]下的[[Project]]节点中，
+ * 并在分组表达式和不含聚合函数的聚合表达式中被引用。
+ * 这些引用能保证优化规则不会将聚合表达式错误地转换为不再引用任何分组表达式的无效形式，
+ * 同时简化节点上的表达式转换（只需转换表达式一次）。
+ * 示例：在以下查询中，Spark不应将聚合表达式Not(IsNull(c))优化为IsNotNull(c)，
+ * 因为分组表达式是 IsNull(c):
+ *     SELECT not(c IS NULL) FROM t GROUP BY c IS NULL
+ * 正确的处理方式是让聚合表达式引用_groupingexpression属性：
  * Aggregate [_groupingexpression#233], [NOT _groupingexpression#233 AS (NOT (c IS NULL))#230]
  * +- Project [isnull(c#219) AS _groupingexpression#233]
- *    +- LocalRelation [c#219]
+ * +- LocalRelation [c#219]
  */
 object PullOutGroupingExpressions extends Rule[LogicalPlan] {
   override def apply(plan: LogicalPlan): LogicalPlan = {

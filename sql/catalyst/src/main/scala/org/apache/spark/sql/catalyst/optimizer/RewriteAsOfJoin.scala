@@ -24,14 +24,14 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules._
 
 /**
- * Replaces logical [[AsOfJoin]] operator using a combination of Join and Aggregate operator.
+ * 使用Join和Aggregate算子的组合来替换逻辑上的[[AsOfJoin]]操作。
  *
- * Input Pseudo-Query:
+ * 原始伪查询 :
  * {{{
  *    SELECT * FROM left ASOF JOIN right ON (condition, as_of on(left.t, right.t), tolerance)
  * }}}
  *
- * Rewritten Query:
+ * 重写后的查询 :
  * {{{
  *   SELECT left.*, __right__.*
  *   FROM (

@@ -38,13 +38,11 @@ import org.apache.spark.sql.types._
 
 
 /**
- * This rule rewrites predicate sub-queries into left semi/anti joins. The following predicates
- * are supported:
- * a. EXISTS/NOT EXISTS will be rewritten as semi/anti join, unresolved conditions in Filter
- *    will be pulled out as the join conditions.
- * b. IN/NOT IN will be rewritten as semi/anti join, unresolved conditions in the Filter will
- *    be pulled out as join conditions, value = selected column will also be used as join
- *    condition.
+ * 本规则将谓词子查询重写为左半连接(left semi)/反连接(anti join)，支持以下谓词类型：
+ *
+ * a. EXISTS/NOT EXISTS 将被重写为半连接/反连接，Filter中未解析的条件将作为连接条件提取出来
+ *
+ * b. IN/NOT IN 将被重写为半连接/反连接，Filter中未解析的条件将作为连接条件提取，同时value=选定列的条件也会被用作连接条件
  */
 object RewritePredicateSubquery extends Rule[LogicalPlan] with PredicateHelper {
 

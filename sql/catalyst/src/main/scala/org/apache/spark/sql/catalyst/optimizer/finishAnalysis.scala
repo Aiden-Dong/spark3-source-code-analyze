@@ -32,14 +32,13 @@ import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 
+
 /**
- * Finds all the [[RuntimeReplaceable]] expressions that are unevaluable and replace them
- * with semantically equivalent expressions that can be evaluated.
- *
- * This is mainly used to provide compatibility with other databases.
- * Few examples are:
- *   we use this to support "left" by replacing it with "substring".
- *   we use this to replace Every and Any with Min and Max respectively.
+ * 查找并替换所有无法直接求值的[[RuntimeReplaceable]]表达式，
+ * 将其转换为语义等效且可求值的表达式。
+ * 该转换主要提供与其他数据库的兼容支持，典型场景包括：
+ * 将"left"函数替换为"substring"实现
+ * 分别用Min和Max替换Every和Any函数
  */
 object ReplaceExpressions extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan.transformWithPruning(
@@ -53,11 +52,13 @@ object ReplaceExpressions extends Rule[LogicalPlan] {
   }
 }
 
+
 /**
- * Rewrite non correlated exists subquery to use ScalarSubquery
- *   WHERE EXISTS (SELECT A FROM TABLE B WHERE COL1 > 10)
- * will be rewritten to
- *   WHERE (SELECT 1 FROM (SELECT A FROM TABLE B WHERE COL1 > 10) LIMIT 1) IS NOT NULL
+ * 将非关联的EXISTS子查询重写为使用标量子查询(ScalarSubquery)
+ * 示例转换：
+ * WHERE EXISTS (SELECT A FROM TABLE B WHERE COL1 > 10)
+ * 将被重写为
+ * WHERE (SELECT 1 FROM (SELECT A FROM TABLE B WHERE COL1 > 10) LIMIT 1) IS NOT NULL
  */
 object RewriteNonCorrelatedExists extends Rule[LogicalPlan] {
   override def apply(plan: LogicalPlan): LogicalPlan = plan.transformAllExpressionsWithPruning(
@@ -71,7 +72,7 @@ object RewriteNonCorrelatedExists extends Rule[LogicalPlan] {
 }
 
 /**
- * Computes the current date and time to make sure we return the same result in a single query.
+ * 计算当前日期和时间，以确保在同一个查询中返回一致的结果。
  */
 object ComputeCurrentTime extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = {
@@ -100,8 +101,8 @@ object ComputeCurrentTime extends Rule[LogicalPlan] {
 }
 
 /**
- * Replaces the expression of CurrentDatabase with the current database name.
- * Replaces the expression of CurrentCatalog with the current catalog name.
+ * 将CurrentDatabase表达式替换为当前数据库名
+ * 将CurrentCatalog表达式替换为当前目录名称
  */
 case class ReplaceCurrentLike(catalogManager: CatalogManager) extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = {
@@ -122,8 +123,7 @@ case class ReplaceCurrentLike(catalogManager: CatalogManager) extends Rule[Logic
 }
 
 /**
- * Replaces casts of special datetime strings by its date/timestamp values
- * if the input strings are foldable.
+ * 当输入字符串可折叠时，将特殊日期时间字符串的类型转换替换为对应的日期/时间戳值。
  */
 object SpecialDatetimeValues extends Rule[LogicalPlan] {
   private val conv = Map[DataType, (String, java.time.ZoneId) => Option[Any]](
