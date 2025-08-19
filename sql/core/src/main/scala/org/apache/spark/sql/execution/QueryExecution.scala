@@ -78,7 +78,7 @@ class QueryExecution(
   // 判断是否是 Command 类型SQL, 是否要立即执行
   lazy val commandExecuted: LogicalPlan = mode match {
     case CommandExecutionMode.NON_ROOT => analyzed.mapChildren(eagerlyExecuteCommands)
-    case CommandExecutionMode.ALL => eagerlyExecuteCommands(analyzed)                    // 默认情况
+    case CommandExecutionMode.ALL => eagerlyExecuteCommands(analyzed)
     case CommandExecutionMode.SKIP => analyzed
   }
 
@@ -91,12 +91,6 @@ class QueryExecution(
     case _ => "command"
   }
 
-  /**
-   * 提前执行命令，或者是立刻执行命令
-   *  LogicalPlan.transformDown  是一个自顶向下的（需要优先处理父节点）它的核心功能是遍历并修改逻辑计划的结构
-   *  transformDown	自顶向下	需要优先处理父节点（如谓词下推）
-   *  transformUp	自底向上	需要子节点处理完毕后再处理父节点（如列剪裁）
-   */
   private def eagerlyExecuteCommands(p: LogicalPlan) = p transformDown {
 
     case c: Command =>

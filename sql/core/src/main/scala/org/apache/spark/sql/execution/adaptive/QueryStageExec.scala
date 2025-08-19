@@ -51,6 +51,8 @@ abstract class QueryStageExec extends LeafExecNode {
   val plan: SparkPlan
 
   /**
+   * 将语义相同但表达不同的计划转换为统一形式
+   * 用于判断两个 Exchange 是否可以复用
    * The canonicalized plan before applying query stage optimizer rules.
    */
   val _canonicalized: SparkPlan

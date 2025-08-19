@@ -29,25 +29,20 @@ import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRela
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
 
 /**
- * Dynamic partition pruning optimization is performed based on the type and
- * selectivity of the join operation. During query optimization, we insert a
- * predicate on the filterable table using the filter from the other side of
- * the join and a custom wrapper called DynamicPruning.
+ * 动态分区剪枝优化根据join操作的类型和选择性来执行。在查询优化过程中，我们通过以下方式在可筛选表上插入谓词：
+ *  1. 使用连接另一侧的筛选条件
+ *  2. 采用名为DynamicPruning的自定义包装器
  *
- * The basic mechanism for DPP inserts a duplicated subquery with the filter from the other side,
- * when the following conditions are met:
- *    (1) the table to prune is filterable by the JOIN key
- *    (2) the join operation is one of the following types: INNER, LEFT SEMI,
- *    LEFT OUTER (partitioned on right), or RIGHT OUTER (partitioned on left)
+ * 动态分区剪枝(DPP)的基础实现机制是：在满足以下条件时插入包含另一侧筛选条件的重复子查询：
+ *    (1) 待剪枝表可通过JOIN键进行过滤
+ *    (2) 连接操作属于以下类型之一：INNER、LEFT SEMI、LEFT OUTER（右侧分区）或RIGHT OUTER（左侧分区）
  *
- * In order to enable partition pruning directly in broadcasts, we use a custom DynamicPruning
- * clause that incorporates the In clause with the subquery and the benefit estimation.
- * During query planning, when the join type is known, we use the following mechanism:
- *    (1) if the join is a broadcast hash join, we replace the duplicated subquery with the reused
- *    results of the broadcast,
- *    (2) else if the estimated benefit of partition pruning outweighs the overhead of running the
- *    subquery query twice, we keep the duplicated subquery
- *    (3) otherwise, we drop the subquery.
+ * 为了实现广播场景的直接分区剪枝，我们采用自定义的DynamicPruning子句，该子句将In条件、子查询和收益评估封装在一起。
+ * 在查询规划阶段确定连接类型后，决策机制如下：
+ *
+ *    (1) 若为广播哈希连接，则用广播结果复用替代重复子查询
+ *    (2) 若分区剪枝的预估收益超过子查询重复执行的开销，则保留重复子查询
+ *    (3) 否则移除子查询.
  */
 object PartitionPruning extends Rule[LogicalPlan] with PredicateHelper with JoinSelectionHelper {
 

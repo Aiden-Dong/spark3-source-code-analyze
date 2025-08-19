@@ -1316,12 +1316,12 @@ private[spark] class Client(
   }
 
   /**
-   * Submit an application to the ResourceManager.
-   * If set spark.yarn.submit.waitAppCompletion to true, it will stay alive
-   * reporting the application's status until the application has exited for any reason.
-   * Otherwise, the client process will exit after submission.
-   * If the application finishes with a failed, killed, or undefined status,
-   * throw an appropriate SparkException.
+   * 向ResourceManager提交应用程序。
+   * 如果设置spark.yarn.submit.waitAppCompletion为true，客户端将保持活跃状态，
+   * 持续报告应用状态，直到应用程序因任何原因退出。
+   * 否则，客户端进程将在提交后直接退出。
+   * 如果应用程序以失败（failed）、被终止（killed）或未定义状态结束，
+   * 将抛出相应的SparkException异常。
    */
   def run(): Unit = {
     submitApplication()

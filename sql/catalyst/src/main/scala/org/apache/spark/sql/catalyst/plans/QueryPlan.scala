@@ -528,6 +528,9 @@ abstract class QueryPlan[PlanType <: QueryPlan[PlanType]]
   protected def isCanonicalizedPlan: Boolean = _isCanonicalizedPlan
 
   /**
+   *
+   * • 将语义相同但表达不同的计划转换为统一形式
+   * • 用于判断两个 Exchange 是否可以复用
    * Returns a plan where a best effort attempt has been made to transform `this` in a way
    * that preserves the result but removes cosmetic variations (case sensitivity, ordering for
    * commutative operations, expression id, etc.)

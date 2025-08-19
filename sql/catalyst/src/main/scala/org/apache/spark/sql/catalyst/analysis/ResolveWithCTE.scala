@@ -25,7 +25,7 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.{CTE, PLAN_EXPRESSION}
 
 /**
- * Updates CTE references with the resolve output attributes of corresponding CTE definitions.
+ * 更新CTE引用，使其与对应CTE定义的解析输出属性保持一致。
  */
 object ResolveWithCTE extends Rule[LogicalPlan] {
   override def apply(plan: LogicalPlan): LogicalPlan = {

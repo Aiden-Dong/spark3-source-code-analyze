@@ -2656,10 +2656,8 @@ object SQLConf {
   val DECIMAL_OPERATIONS_ALLOW_PREC_LOSS =
     buildConf("spark.sql.decimalOperations.allowPrecisionLoss")
       .internal()
-      .doc("When true (default), establishing the result type of an arithmetic operation " +
-        "happens according to Hive behavior and SQL ANSI 2011 specification, i.e. rounding the " +
-        "decimal part of the result if an exact representation is not possible. Otherwise, NULL " +
-        "is returned in those cases, as previously.")
+      .doc("当为true（默认值）时，算术运算结果类型的确定将遵循Hive行为和SQL ANSI 2011规范，即如果无法精确表示，则对结果的小数部分进行四舍五入。" +
+        "否则，在这些情况下将返回NULL，与之前的行为一致。")
       .version("2.3.1")
       .booleanConf
       .createWithDefault(true)
