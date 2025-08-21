@@ -361,10 +361,10 @@ object ShufflePartitionsUtil extends Logging {
     partitionStartIndices.toArray
   }
 
-  /**
-   * Get the map size of the specific shuffle and reduce ID. Note that, some map outputs can be
-   * missing due to issues like executor lost. The size will be -1 for missing map outputs and the
-   * caller side should take care of it.
+  /*******
+   * 获取特定shuffle和reduce ID对应的map输出大小。
+   * 需要注意的是，由于某些问题（如执行器丢失），部分map输出可能缺失。
+   * 对于缺失的map输出，其大小将显示为-1，调用方需要自行处理这种情况
    */
   private def getMapSizesForReduceId(shuffleId: Int, partitionId: Int): Array[Long] = {
     val mapOutputTracker = SparkEnv.get.mapOutputTracker.asInstanceOf[MapOutputTrackerMaster]
@@ -378,15 +378,25 @@ object ShufflePartitionsUtil extends Logging {
    * after split, and create a list of `PartialReducerPartitionSpec`. Returns None if can't split.
    */
   def createSkewPartitionSpecs(
-      shuffleId: Int,
-      reducerId: Int,
-      targetSize: Long,
+      shuffleId: Int,                                    // Shuffle ID
+      reducerId: Int,                                    // 要分割的 Reduce 分区 ID (分区 ID)
+      targetSize: Long,                                  // 目标分割大小
       smallPartitionFactor: Double = SMALL_PARTITION_FACTOR)
   : Option[Seq[PartialReducerPartitionSpec]] = {
+
+    // 步骤1：获取 Map 输出大小统计
+    // 每个 Shuffle 分区的数据来自多个 Map 任务的输出
+    // getMapSizesForReduceId 获取所有 Map 任务对特定 Reducer 分区的输出大小
+    // 如果有 Map 输出丢失（-1），则无法进行分割
     val mapPartitionSizes = getMapSizesForReduceId(shuffleId, reducerId)
     if (mapPartitionSizes.exists(_ < 0)) return None
+
+    // 步骤2：计算分割点
     val mapStartIndices = splitSizeListByTargetSize(
       mapPartitionSizes, targetSize, smallPartitionFactor)
+
+
+    // 步骤3：生成 PartialReducerPartitionSpec
     if (mapStartIndices.length > 1) {
       Some(mapStartIndices.indices.map { i =>
         val startMapIndex = mapStartIndices(i)
