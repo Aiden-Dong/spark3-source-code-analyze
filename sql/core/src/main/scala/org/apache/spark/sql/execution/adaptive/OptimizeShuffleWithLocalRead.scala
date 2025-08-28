@@ -66,16 +66,18 @@ object OptimizeShuffleWithLocalRead extends AQEShuffleReadRule {
   private def getPartitionSpecs(
       shuffleStage: ShuffleQueryStageExec,
       advisoryParallelism: Option[Int]): Seq[ShufflePartitionSpec] = {
-    val numMappers = shuffleStage.shuffle.numMappers
-    // ShuffleQueryStageExec.mapStats.isDefined promise numMappers > 0
+
+    val numMappers = shuffleStage.shuffle.numMappers                      // map 的任务书
     assert(numMappers > 0)
-    val numReducers = shuffleStage.shuffle.numPartitions
+    val numReducers = shuffleStage.shuffle.numPartitions                  // reduce 的 任务数量
+
     val expectedParallelism = advisoryParallelism.getOrElse(numReducers)
     val splitPoints = if (expectedParallelism >= numMappers) {
       equallyDivide(numReducers, expectedParallelism / numMappers)
     } else {
       equallyDivide(numMappers, expectedParallelism)
     }
+
     if (expectedParallelism >= numMappers) {
       (0 until numMappers).flatMap { mapIndex =>
         (splitPoints :+ numReducers).sliding(2).map {

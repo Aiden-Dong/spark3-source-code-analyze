@@ -26,13 +26,23 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLShuffleReadMetricsReporter}
 import org.apache.spark.sql.internal.SQLConf
 
+// 统一抽象不同类型的 Shuffle 分区读取策略
+// 支持模式匹配， 确保类型安全
+// 为 AQE 提供灵活的分区重组能力
+//
+// Shuffle 数据可以看作一个二维矩阵：
+//         Reducer 0  Reducer 1  Reducer 2  Reducer 3
+// Map 0   [  data  ] [  data  ] [  data  ] [  data  ]
+// Map 1   [  data  ] [  data  ] [  data  ] [  data  ]
+// Map 2   [  data  ] [  data  ] [  data  ] [  data  ]
+// Map 3   [  data  ] [  data  ] [  data  ] [  data  ]
 sealed trait ShufflePartitionSpec
 
-// A partition that reads data of one or more reducers, from `startReducerIndex` (inclusive) to
-// `endReducerIndex` (exclusive).
+// 用于合并 reduce 分区的能力， 用来读取从 [startReducerIndex, endReducerIndex) 的分区数据
+// 这里的下游分区数
 case class CoalescedPartitionSpec(
-    startReducerIndex: Int,
-    endReducerIndex: Int,
+    startReducerIndex: Int,        // 开始的 Reducer 索引
+    endReducerIndex: Int,          // 结束的 Reducer 索引
     @transient dataSize: Option[Long] = None) extends ShufflePartitionSpec
 
 object CoalescedPartitionSpec {
@@ -43,22 +53,32 @@ object CoalescedPartitionSpec {
   }
 }
 
-// A partition that reads partial data of one reducer, from `startMapIndex` (inclusive) to
-// `endMapIndex` (exclusive).
+// 部分 Reducer 分区规格
+// 用途：读取单个 Reducer 分区的部分数据（来自指定范围的 Map 任务）
+// 典型场景：倾斜优化中分割大分区
+// • PartialReducerPartitionSpec(1, 0, 2, 200MB) 读取分区1中来自Map[0,2)的数据
+// • PartialReducerPartitionSpec(1, 2, 4, 200MB) 读取分区1中来自Map[2,4)的数据
 case class PartialReducerPartitionSpec(
-    reducerIndex: Int,
-    startMapIndex: Int,
-    endMapIndex: Int,
+    reducerIndex: Int,       // 目标  Reducer 分区索引
+    startMapIndex: Int,      // 开始的 Map  索引
+    endMapIndex: Int,        // 结束的 Map 索引
     @transient dataSize: Long) extends ShufflePartitionSpec
 
 // A partition that reads partial data of one mapper, from `startReducerIndex` (inclusive) to
 // `endReducerIndex` (exclusive).
+
+// 读取单个 Map 任务的部分输出（发送到指定范围的 Reducer）
+// 典型场景：本地读取优化，避免网络传输
 case class PartialMapperPartitionSpec(
-    mapIndex: Int,
-    startReducerIndex: Int,
-    endReducerIndex: Int) extends ShufflePartitionSpec
+    mapIndex: Int,           // 目标 map 索引
+    startReducerIndex: Int,  // 开始的 reduce 索引位置
+    endReducerIndex: Int     // 结束的 reduce 索引位置
+) extends ShufflePartitionSpec
 
 // TODO(SPARK-36234): Consider mapper location and shuffle block size when coalescing mappers
+//  合并 Mapper 分区规格
+// 读取多个 Map 任务的完整输出
+// 典型场景：Map 端合并优化
 case class CoalescedMapperPartitionSpec(
     startMapIndex: Int,
     endMapIndex: Int,
@@ -120,25 +140,22 @@ class CoalescedPartitioner(val parent: Partitioner, val partitionStartIndices: A
 }
 
 /**
- * This is a specialized version of [[org.apache.spark.rdd.ShuffledRDD]] that is optimized for
- * shuffling rows instead of Java key-value pairs. Note that something like this should eventually
- * be implemented in Spark core, but that is blocked by some more general refactorings to shuffle
- * interfaces / internals.
+ * 这是 [[org.apache.spark.rdd.ShuffledRDD]] 的特化版本，专门针对行数据的 shuffle 进行了优化，
+ * 而不是处理 Java 键值对。注意，像这样的实现最终应该在 Spark 核心中实现，
+ * 但目前被一些更通用的 shuffle 接口/内部重构所阻塞。
  *
- * This RDD takes a [[ShuffleDependency]] (`dependency`),
- * and an array of [[ShufflePartitionSpec]] as input arguments.
+ * 这个 RDD 接受一个 [[ShuffleDependency]] (`dependency`) 和一个 [[ShufflePartitionSpec]] 数组作为输入参数。
  *
- * The `dependency` has the parent RDD of this RDD, which represents the dataset before shuffle
- * (i.e. map output). Elements of this RDD are (partitionId, Row) pairs.
- * Partition ids should be in the range [0, numPartitions - 1].
- * `dependency.partitioner` is the original partitioner used to partition
- * map output, and `dependency.partitioner.numPartitions` is the number of pre-shuffle partitions
- * (i.e. the number of partitions of the map output).
+ * `dependency` 包含了这个 RDD 的父 RDD，它代表 shuffle 之前的数据集（即 map 输出）。
+ * 这个 RDD 的元素是 (partitionId, Row) 对。
+ * 分区 ID 应该在 [0, numPartitions - 1] 范围内。
+ * `dependency.partitioner` 是用于分区 map 输出的原始分区器，
+ * `dependency.partitioner.numPartitions` 是 shuffle 前的分区数量（即 map 输出的分区数量）。
  */
 class ShuffledRowRDD(
-    var dependency: ShuffleDependency[Int, InternalRow, InternalRow],
+    var dependency: ShuffleDependency[Int, InternalRow, InternalRow],   // 定义了 shuffle 的依赖关系
     metrics: Map[String, SQLMetric],
-    partitionSpecs: Array[ShufflePartitionSpec])
+    partitionSpecs: Array[ShufflePartitionSpec])                        // 定义如何读取 shuffle 数据的规格数组
   extends RDD[InternalRow](dependency.rdd.context, Nil) {
 
   def this(
@@ -154,6 +171,11 @@ class ShuffledRowRDD(
 
   override def getDependencies: Seq[Dependency[_]] = List(dependency)
 
+  /***
+   * 如果所有分区规范都是CoalescedPartitionSpec类型，则创建CoalescedPartitioner
+   * 检查分区索引的唯一性，确保分区器的有效性
+   * 否则返回None
+   */
   override val partitioner: Option[Partitioner] =
     if (partitionSpecs.forall(_.isInstanceOf[CoalescedPartitionSpec])) {
       val indices = partitionSpecs.map(_.asInstanceOf[CoalescedPartitionSpec].startReducerIndex)
@@ -167,6 +189,7 @@ class ShuffledRowRDD(
       None
     }
 
+  // 获取当前 RDD 的 Shuffle 分区限制
   override def getPartitions: Array[Partition] = {
     Array.tabulate[Partition](partitionSpecs.length) { i =>
       ShuffledRowRDDPartition(i, partitionSpecs(i))

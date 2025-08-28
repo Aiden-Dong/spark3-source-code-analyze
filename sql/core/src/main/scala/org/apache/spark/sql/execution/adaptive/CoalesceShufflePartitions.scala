@@ -27,13 +27,37 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.Utils
 
 /**
- * 基于映射输出统计信息合并混洗分区的规则，可以避免许多小的归并任务，从而提高性能。
+ * CoalesceShufflePartitions是AQE中的一个核心优化规则，主要用于：
+ * • **合并小的shuffle分区**，减少任务数量
+ * • **避免大量小任务**，提高整体执行性能
+ * • **基于实际数据统计**进行动态分区调整
  */
 case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleReadRule {
 
   override val supportedShuffleOrigins: Seq[ShuffleOrigin] =
     Seq(ENSURE_REQUIREMENTS, REPARTITION_BY_COL, REBALANCE_PARTITIONS_BY_NONE,
       REBALANCE_PARTITIONS_BY_COL)
+
+
+  // 最小分区数量（保证并行度）
+  val minNumPartitions = conf.getConf(SQLConf.COALESCE_PARTITIONS_MIN_PARTITION_NUM).getOrElse {
+    if (conf.getConf(SQLConf.COALESCE_PARTITIONS_PARALLELISM_FIRST)) {
+      // 如果未设置最小合并分区数，则我们会退回到 Spark 默认并行度，以避免与不进行合并相比的性能回归。
+      session.sparkContext.defaultParallelism
+    } else {
+      1
+    }
+  }
+
+  // 目标分区大小 spark.sql.adaptive.advisoryPartitionSizeInBytes
+  val advisoryTargetSize = conf.getConf(SQLConf.ADVISORY_PARTITION_SIZE_IN_BYTES)
+
+  // 最小分区大小（默认1MB）
+  val minPartitionSize = if (Utils.isTesting) {
+    conf.getConf(SQLConf.COALESCE_PARTITIONS_MIN_PARTITION_SIZE).min(advisoryTargetSize / 5)
+  } else {
+    conf.getConf(SQLConf.COALESCE_PARTITIONS_MIN_PARTITION_SIZE)
+  }
 
   override def isSupported(shuffle: ShuffleExchangeLike): Boolean = {
     shuffle.outputPartitioning != SinglePartition && super.isSupported(shuffle)
@@ -44,38 +68,11 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
       return plan
     }
 
-    // 理想情况下，此规则应简单地根据 ADVISORY_PARTITION_SIZE_IN_BYTES（默认为 64MB）指定的目标大小合并分区。
-    // 为了避免在 AQE 中出现性能回归，此规则默认尝试最大化并行性，并将目标大小设置为“总洗牌大小 / Spark 默认并行度”。
-    // 如果“Spark 默认并行度”太大，此规则还将考虑 COALESCE_PARTITIONS_MIN_PARTITION_SIZE（默认为 1MB）指定的最小分区大小。
-    // 出于历史原因，此规则还需要支持 COALESCE_PARTITIONS_MIN_PARTITION_NUM 配置。我们应该在未来删除此配置。
-    val minNumPartitions = conf.getConf(SQLConf.COALESCE_PARTITIONS_MIN_PARTITION_NUM).getOrElse {
-      if (conf.getConf(SQLConf.COALESCE_PARTITIONS_PARALLELISM_FIRST)) {
-        // 如果未设置最小合并分区数，则我们会退回到 Spark 默认并行度，以避免与不进行合并相比的性能回归。
-        session.sparkContext.defaultParallelism
-      } else {
-        // If we don't need to maximize the parallelism, we set `minPartitionNum` to 1, so that
-        // the specified advisory partition size will be respected.
-        1
-      }
-    }
-    // spark.sql.adaptive.advisoryPartitionSizeInBytes
-    val advisoryTargetSize = conf.getConf(SQLConf.ADVISORY_PARTITION_SIZE_IN_BYTES)
 
-    // 最小分区大小
-    val minPartitionSize = if (Utils.isTesting) {
-      // 在测试中，我们通常将目标大小设置为非常小的值，甚至比最小分区大小的默认值还要小。
-      // 在这里，我们还将最小分区大小调整为不大于目标大小的20%，这样测试就不需要一直设置这两个配置来检查合并行为。
-      conf.getConf(SQLConf.COALESCE_PARTITIONS_MIN_PARTITION_SIZE).min(advisoryTargetSize / 5)
-    } else {
-      conf.getConf(SQLConf.COALESCE_PARTITIONS_MIN_PARTITION_SIZE)
-    }
-
-    // Union 操作符下的子计划可以独立合并，因此我们可以将它们划分为独立的“合并组”，
-    // 每个组中的所有 shuffle 阶段必须一起合并。
-    // 收集整理要合并的分区
+    // TODO - 1 :  收集整理要合并的分区  : Seq[Seq[ShuffleStageInfo]]
     val coalesceGroups = collectCoalesceGroups(plan)
 
-    // 根据数据大小在合并组之间分配最小任务并行度。
+    // TODO - 2 : 分配最小分区数给各组
     val minNumPartitionsByGroup = if (coalesceGroups.length == 1) {
       Seq(math.max(minNumPartitions, 1))
     } else {
@@ -89,7 +86,7 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
       sizes.map {
         size =>
           val num = if (totalSize > 0) {
-            math.round(minNumPartitions * 1.0 * size / totalSize)
+            math.round(minNumPartitions * 1.0 * size / totalSize)  // 需要在解释一下
           } else {
             minNumPartitions
           }
@@ -104,9 +101,11 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
     coalesceGroups.zip(minNumPartitionsByGroup)
       .foreach {
         case (shuffleStages, minNumPartitions) =>  // 每个组与每个组的最小分区数
+
+          // 调用核心合并算法，为每个shuffle阶段生成新的分区规格
           val newPartitionSpecs = ShufflePartitionsUtil.coalescePartitions(
           shuffleStages.map(_.shuffleStage.mapStats),    // 输入分区信息
-          shuffleStages.map(_.partitionSpecs),           // stage 的分区描述信息
+          shuffleStages.map(_.partitionSpecs),           // stage 的分区描述信息 - 这是是处理数据倾斜问题的
           advisoryTargetSize = advisoryTargetSize,       // 动态分区目标数据大小
           minNumPartitions = minNumPartitions,           // 最小分区量
           minPartitionSize = minPartitionSize)           // 最低分区值
@@ -129,12 +128,17 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
    * 收集所有可合并的组，以便每个 Union 操作符的子操作符的洗牌阶段都在它们各自的独立组中，如果：
    * - 该子操作符的所有叶节点都是洗牌阶段；以及
    * - 所有这些洗牌阶段都支持合并。
+   *
+   * shuffle阶段信息的分组序列，每个内层序列是一个独立的合并组
    */
   private def collectCoalesceGroups(plan: SparkPlan): Seq[Seq[ShuffleStageInfo]] = plan match {
     case r @ AQEShuffleReadExec(q: ShuffleQueryStageExec, _) if isSupported(q.shuffle) => Seq(collectShuffleStageInfos(r))
     case unary: UnaryExecNode => collectCoalesceGroups(unary.child)
+
     case union: UnionExec => union.children.flatMap(collectCoalesceGroups)
     // 如果并非所有叶节点都是查询阶段，那么减少洗牌分区数量可能会破坏 Spark 计划中子操作符之间关于输出分区数量的假设，导致任务执行失败。
+
+    // 处理 JOIN 之类的类型
     case p if p.collectLeaves().forall(_.isInstanceOf[QueryStageExec]) =>
       val shuffleStages = collectShuffleStageInfos(p)
       // 由重新分区引入的 ShuffleExchange 不支持更改分区数量。

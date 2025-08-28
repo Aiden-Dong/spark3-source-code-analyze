@@ -39,11 +39,15 @@ object ShufflePartitionsUtil extends Logging {
    *         如果返回 Nil，则没有应用合并。
    */
   def coalescePartitions(
-      mapOutputStatistics: Seq[Option[MapOutputStatistics]],          // 每个Stage 的Shuffle 分区信息
-      inputPartitionSpecs: Seq[Option[Seq[ShufflePartitionSpec]]],    // 每个 stage 输入分区信息
+      mapOutputStatistics: Seq[Option[MapOutputStatistics]],          // 每个shuffle stage的输出统计信息序列
+
+      inputPartitionSpecs: Seq[Option[Seq[ShufflePartitionSpec]]],    // • 如果为None或空序列，表示使用原始分区（没有经过倾斜处理）
+                                                                      // • 如果有值，表示已经应用了倾斜连接优化，包含PartialReducerPartitionSpec等特殊分区规格
+
       advisoryTargetSize: Long,                                       // 目的调整大小
-      minNumPartitions: Int,
-      minPartitionSize: Long): Seq[Seq[ShufflePartitionSpec]] = {
+      minNumPartitions: Int,                                          // 最小分区值
+      minPartitionSize: Long                                          // 最小分区大小
+  ): Seq[Seq[ShufflePartitionSpec]] = {
     assert(mapOutputStatistics.length == inputPartitionSpecs.length)
 
     if (mapOutputStatistics.isEmpty) {

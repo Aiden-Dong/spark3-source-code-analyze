@@ -123,6 +123,8 @@ case class OptimizeSkewedJoin(ensureRequirements: EnsureRequirements)
       left: ShuffleQueryStageExec,
       right: ShuffleQueryStageExec,
       joinType: JoinType): Option[(SparkPlan, SparkPlan)] = {
+
+    // left 会把左侧未匹配的抛出来， 如果是拆分了右侧， 会重复抛出左侧数据， 造成冗余
     val canSplitLeft = canSplitLeftSide(joinType)
     val canSplitRight = canSplitRightSide(joinType)
     if (!canSplitLeft && !canSplitRight) return None

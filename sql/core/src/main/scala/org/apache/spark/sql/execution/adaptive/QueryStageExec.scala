@@ -151,14 +151,15 @@ abstract class QueryStageExec extends LeafExecNode {
  * A shuffle query stage whose child is a [[ShuffleExchangeLike]] or [[ReusedExchangeExec]].
  *
  * @param id the query stage id.
- * @param plan the underlying plan.
- * @param _canonicalized the canonicalized plan before applying query stage optimizer rules.
+ * @param plan 底层的执行计划（实际的shuffle操作）
+ * @param _canonicalized 应用查询阶段优化规则之前的规范化计划.  用于重用判断
  */
 case class ShuffleQueryStageExec(
     override val id: Int,
-    override val plan: SparkPlan,
+    override val plan: SparkPlan,      // Exchage
     override val _canonicalized: SparkPlan) extends QueryStageExec {
 
+  // ShuffleExchangeLike
   @transient val shuffle = plan match {
     case s: ShuffleExchangeLike => s
     case ReusedExchangeExec(_, s: ShuffleExchangeLike) => s

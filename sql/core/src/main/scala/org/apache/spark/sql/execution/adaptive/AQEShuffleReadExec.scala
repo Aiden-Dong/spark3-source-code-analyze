@@ -30,12 +30,10 @@ import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
 /**
- * A wrapper of shuffle query stage, which follows the given partition arrangement.
+ * 根据运行时统计信息，动态调整shuffle读取的分区安排。
  *
- * @param child           It is usually `ShuffleQueryStageExec`, but can be the shuffle exchange
- *                        node during canonicalization.
- * @param partitionSpecs  The partition specs that defines the arrangement, requires at least one
- *                        partition.
+ * @param child           通常是 `ShuffleQueryStageExec`，但在规范化期间可以是shuffle exchange节点
+ * @param partitionSpecs  定义分区安排的分区规范，至少需要一个分区
  */
 case class AQEShuffleReadExec private(
     child: SparkPlan,
@@ -53,12 +51,12 @@ case class AQEShuffleReadExec private(
   override def output: Seq[Attribute] = child.output
 
   override lazy val outputPartitioning: Partitioning = {
-    // If it is a local shuffle read with one mapper per task, then the output partitioning is
-    // the same as the plan before shuffle.
-    // TODO this check is based on assumptions of callers' behavior but is sufficient for now.
+
     if (partitionSpecs.forall(_.isInstanceOf[PartialMapperPartitionSpec]) &&
         partitionSpecs.map(_.asInstanceOf[PartialMapperPartitionSpec].mapIndex).toSet.size ==
           partitionSpecs.length) {
+
+      // 情况1：本地shuffle读取，每个任务一个mapper
       child match {
         case ShuffleQueryStageExec(_, s: ShuffleExchangeLike, _) =>
           s.child.outputPartitioning
@@ -71,11 +69,14 @@ case class AQEShuffleReadExec private(
           throw new IllegalStateException("operating on canonicalization plan")
       }
     } else if (isCoalescedRead) {
-      // For coalesced shuffle read, the data distribution is not changed, only the number of
-      // partitions is changed.
+      //  情况2：合并读取
+
       child.outputPartitioning match {
+        // 保持Hash分区语义，只改变分区数量
         case h: HashPartitioning =>
           CurrentOrigin.withOrigin(h.origin)(h.copy(numPartitions = partitionSpecs.length))
+
+        // 保持Range分区语义，只改变分区数量
         case r: RangePartitioning =>
           CurrentOrigin.withOrigin(r.origin)(r.copy(numPartitions = partitionSpecs.length))
         // This can only happen for `REBALANCE_PARTITIONS_BY_NONE`, which uses
@@ -111,25 +112,22 @@ case class AQEShuffleReadExec private(
     Iterator(desc)
   }
 
-  /**
-   * Returns true iff some partitions were actually combined
-   */
+  /////   是不是需要分区合并
   private def isCoalescedSpec(spec: ShufflePartitionSpec) = spec match {
     case CoalescedPartitionSpec(0, 0, _) => true
     case s: CoalescedPartitionSpec => s.endReducerIndex - s.startReducerIndex > 1
     case _ => false
   }
 
-  /**
-   * Returns true iff some non-empty partitions were combined
-   */
   def hasCoalescedPartition: Boolean = {
     partitionSpecs.exists(isCoalescedSpec)
   }
 
+  //  是否是存在 倾斜分区处理
   def hasSkewedPartition: Boolean =
     partitionSpecs.exists(_.isInstanceOf[PartialReducerPartitionSpec])
 
+  // 是否是 本地读取优化
   def isLocalRead: Boolean =
     partitionSpecs.exists(_.isInstanceOf[PartialMapperPartitionSpec]) ||
       partitionSpecs.exists(_.isInstanceOf[CoalescedMapperPartitionSpec])
@@ -203,6 +201,7 @@ case class AQEShuffleReadExec private(
       partitionDataSizeMetrics.set(dataSizes.sum)
     }
 
+    // 将**Driver端计算的指标**发送到Spark的事件总线，用于UI显示和监控。
     SQLMetrics.postDriverMetricsUpdatedByValue(sparkContext, executionId, driverAccumUpdates.toSeq)
   }
 

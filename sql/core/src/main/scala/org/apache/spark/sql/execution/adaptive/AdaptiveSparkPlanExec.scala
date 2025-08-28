@@ -251,9 +251,7 @@ case class AdaptiveSparkPlanExec(
       // during `initialPlan`
       var currentLogicalPlan = inputPlan.logicalLink.get
 
-
       var result = createQueryStages(currentPhysicalPlan)    // 创建查询阶段
-
 
       val events = new LinkedBlockingQueue[StageMaterializationEvent]()  // 阶段物化事件队列（成功/失败）
       val errors = new mutable.ArrayBuffer[Throwable]()                  // 错误收集器
@@ -302,7 +300,7 @@ case class AdaptiveSparkPlanExec(
             errors.append(ex)
         }
 
-        // In case of errors, we cancel all running stages and throw exception.
+        // 如果物化过程发生失败， 则终止并抛出异常
         if (errors.nonEmpty) {
           cleanUpAndThrowException(errors.toSeq, None)
         }
@@ -316,8 +314,13 @@ case class AdaptiveSparkPlanExec(
         // 维护自上次计划更新后创建的查询阶段列表，该列表表征当前逻辑计划与物理计划间的"语义间隙"
         // 每次重新规划前，将当前逻辑计划中的相应节点替换为逻辑查询阶段，确保与当前物理计划语义同步
         // 当新计划被采用且逻辑/物理计划均更新后，清空查询阶段列表（此时两个计划在语义和物理层面重新达成同步）
+
+        // 1. 用LogicalQueryStage替换已完成的阶段
         val logicalPlan = replaceWithQueryStagesInLogicalPlan(currentLogicalPlan, stagesToReplace)
+        // 2. 基于更新后的逻辑计划重新优化
         val afterReOptimize = reOptimize(logicalPlan)
+
+        // 3. 如果优化后的计划更好，则采用新计划
         if (afterReOptimize.isDefined) {
           val (newPhysicalPlan, newLogicalPlan) = afterReOptimize.get
           val origCost = costEvaluator.evaluateCost(currentPhysicalPlan)
@@ -341,6 +344,8 @@ case class AdaptiveSparkPlanExec(
         postStageCreationRules(supportsColumnar),
         Some((planChangeLogger, "AQE Post Stage Creation")))
       isFinalPlan = true
+
+      // 通知WebUI 此计划被采纳
       executionId.foreach(onUpdatePlan(_, Seq(currentPhysicalPlan)))
       currentPhysicalPlan
     }
@@ -702,25 +707,24 @@ case class AdaptiveSparkPlanExec(
   }
 
   /**
-   * For each query stage in `stagesToReplace`, find their corresponding logical nodes in the
-   * `logicalPlan` and replace them with new [[LogicalQueryStage]] nodes.
-   * 1. If the query stage can be mapped to an integral logical sub-tree, replace the corresponding
-   *    logical sub-tree with a leaf node [[LogicalQueryStage]] referencing this query stage. For
-   *    example:
+   * 对于 `stagesToReplace` 中的每个查询阶段，在 `logicalPlan` 中找到它们对应的逻辑节点，
+   * 并用新的 [[LogicalQueryStage]] 节点替换它们。
+   *
+   * 1. 如果查询阶段可以映射到一个完整的逻辑子树，则用引用该查询阶段的叶子节点 [[LogicalQueryStage]]
+   *    替换相应的逻辑子树。例如：
    *        Join                   SMJ                      SMJ
    *      /     \                /    \                   /    \
    *    r1      r2    =>    Xchg1     Xchg2    =>    Stage1     Stage2
    *                          |        |
    *                          r1       r2
-   *    The updated plan node will be:
+   *    更新后的计划节点将是：
    *                               Join
    *                             /     \
    *    LogicalQueryStage1(Stage1)     LogicalQueryStage2(Stage2)
    *
-   * 2. Otherwise (which means the query stage can only be mapped to part of a logical sub-tree),
-   *    replace the corresponding logical sub-tree with a leaf node [[LogicalQueryStage]]
-   *    referencing to the top physical node into which this logical node is transformed during
-   *    physical planning. For example:
+   * 2. 否则（这意味着查询阶段只能映射到逻辑子树的一部分），
+   *    用引用在物理规划期间该逻辑节点转换成的顶层物理节点的叶子节点 [[LogicalQueryStage]]
+   *    替换相应的逻辑子树。例如：
    *     Agg           HashAgg          HashAgg
    *      |               |                |
    *    child    =>     Xchg      =>     Stage1
@@ -728,7 +732,7 @@ case class AdaptiveSparkPlanExec(
    *                   HashAgg
    *                      |
    *                    child
-   *    The updated plan node will be:
+   *    更新后的计划节点将是：
    *    LogicalQueryStage(HashAgg - Stage1)
    */
   private def replaceWithQueryStagesInLogicalPlan(

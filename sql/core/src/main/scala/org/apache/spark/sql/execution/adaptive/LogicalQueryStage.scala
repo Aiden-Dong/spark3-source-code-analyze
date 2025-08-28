@@ -23,16 +23,13 @@ import org.apache.spark.sql.catalyst.trees.TreePattern.{LOGICAL_QUERY_STAGE, REP
 import org.apache.spark.sql.execution.SparkPlan
 
 /**
- * The LogicalPlan wrapper for a [[QueryStageExec]], or a snippet of physical plan containing
- * a [[QueryStageExec]], in which all ancestor nodes of the [[QueryStageExec]] are linked to
- * the same logical node.
+ * 这是一个 LogicalPlan 包装器，用于包装一个 [[QueryStageExec]]，或者包含 [[QueryStageExec]] 的物理计划片段，
+ * 其中 [[QueryStageExec]] 的所有祖先节点都链接到同一个逻辑节点。
  *
- * For example, a logical Aggregate can be transformed into FinalAgg - Shuffle - PartialAgg, in
- * which the Shuffle will be wrapped into a [[QueryStageExec]], thus the [[LogicalQueryStage]]
- * will have FinalAgg - QueryStageExec as its physical plan.
+ * 例如，一个逻辑聚合（Aggregate）可以被转换为 FinalAgg - Shuffle - PartialAgg 的形式，
+ * 其中 Shuffle 会被包装成一个 [[QueryStageExec]]，因此 [[LogicalQueryStage]]
+ * 将拥有 FinalAgg - QueryStageExec 作为其物理计划。
  */
-// TODO we can potentially include only [[QueryStageExec]] in this class if we make the aggregation
-// planning aware of partitioning.
 case class LogicalQueryStage(
     logicalPlan: LogicalPlan,
     physicalPlan: SparkPlan) extends LeafNode {
