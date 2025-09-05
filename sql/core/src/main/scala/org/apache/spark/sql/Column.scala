@@ -109,32 +109,27 @@ class TypedColumn[-T, U](
 }
 
 /**
- * A column that will be computed based on the data in a `DataFrame`.
+ * 一个将基于 `DataFrame` 中的数据进行计算的列。
  *
- * A new column can be constructed based on the input columns present in a DataFrame:
+ * 可以基于 DataFrame 中存在的输入列构造新列：
  *
  * {{{
- *   df("columnName")            // On a specific `df` DataFrame.
- *   col("columnName")           // A generic column not yet associated with a DataFrame.
- *   col("columnName.field")     // Extracting a struct field
- *   col("`a.column.with.dots`") // Escape `.` in column names.
- *   $"columnName"               // Scala short hand for a named column.
+ *   df("columnName")            // 在特定的 `df` DataFrame 上。
+ *   col("columnName")           // 尚未与 DataFrame 关联的通用列。
+ *   col("columnName.field")     // 提取结构体字段
+ *   col("`a.column.with.dots`") // 在列名中转义 `.`。
+ *   $"columnName"               // Scala 中命名列的简写。
  * }}}
  *
- * [[Column]] objects can be composed to form complex expressions:
+ * [[Column]] 对象可以组合形成复杂表达式：
  *
  * {{{
  *   $"a" + 1
  *   $"a" === $"b"
  * }}}
  *
- * @note The internal Catalyst expression can be accessed via [[expr]], but this method is for
- * debugging purposes only and can change in any future Spark releases.
- *
- * @groupname java_expr_ops Java-specific expression operators
- * @groupname expr_ops Expression operators
- * @groupname df_ops DataFrame functions
- * @groupname Ungrouped Support functions for DataFrames
+ * @note 内部的 Catalyst 表达式可以通过 [[expr]] 访问，但此方法仅用于
+ * 调试目的，在未来的 Spark 版本中可能会发生变化。
  *
  * @since 1.3.0
  */

@@ -36,82 +36,80 @@ import org.apache.spark.sql.types._
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
+ *
  * Catalyst 中的表达式。
+ *
+ * TreeNode[Expression]
+ *  └── [[Expression]] (抽象基类)
+ *     ├── [[LeafExpression]] (叶子表达式)
+ *     │   ├── [[Literal]] (字面量)
+ *     │   ├── [[Attribute]] (属性引用)
+ *     │   └── [[CurrentRow]] (当前行)
+ *     ├── [[UnaryExpression]] (一元表达式)
+ *     │   ├── [[UnaryMinus]] (负号)
+ *     │   ├── [[Cast]] (类型转换)
+ *     │   ├── [[IsNull]] (空值判断)
+ *     │   └── [[Not]] (逻辑非)
+ *     ├── [[BinaryExpression]] (二元表达式)
+ *     │   ├── [[BinaryArithmetic]] (算术运算)
+ *     │   │   ├── [[Add]] (加法)
+ *     │   │   ├── [[Subtract]] (减法)
+ *     │   │   ├── [[Multiply]] (乘法)
+ *     │   │   └── [[Divide]] (除法)
+ *     │   ├── [[BinaryComparison]] (比较运算)
+ *     │   │   ├── [[EqualTo]] (等于)
+ *     │   │   ├── [[LessThan]] (小于)
+ *     │   │   └── [[GreaterThan]] (大于)
+ *     │   └── [[BinaryOperator]] (逻辑运算)
+ *     │       ├── [[And]] (逻辑与)
+ *     │       └── [[Or]] (逻辑或)
+ *     ├── [[TernaryExpression]] (三元表达式)
+ *     │   └── [[If]] (条件表达式)
+ *     ├── [[ComplexExpression]] (复杂表达式)
+ *     │    ├── [[CaseWhen]] (Case表达式)
+ *     │    ├── [[Coalesce]] (合并表达式)
+ *     │    └── [[In]] (包含表达式)
+ *     ├── [[Attribute]] (trait) - 属性抽象
+ *     │    ├── [[AttributeReference]] - 具体的列引用 : 不能直接求值，需要绑定到具体的行, 有唯一的表达式 ID
+ *     │    └── [[PrettyAttribute]] - 美化显示的属性
+ *     ├── [[Alias]] - 表达式别名
+ *     ├── [[ExpectsInputTypes]]  - 定义期望的输入类型 : 用于类型检查和强制转换
+ *     │    ├── [[ImplicitCastInputTypes]] - 支持隐式类型转换 : 自动插入 Cast 表达式
+ *     ├── [[NullIntolerant]]  - 任何 null 输入都产生 null 输出 : 用于优化 null 值处理
+ *
  * 如果一个表达式希望在函数注册表中暴露（以便用户可以使用 "name(arguments...)" 调用它），
  * 具体的实现必须是一个 case 类，其构造函数参数都是表达式类型。例如，参见 [[Substring]]。
  * 有一些重要的特征或抽象类：
  *
- * - [[Nondeterministic]]:        一个不确定的表达式。.
- * - [[Stateful]]:                一个包含可变状态的表达式。例如，MonotonicallyIncreasingID 和 Rand。一个有状态的表达式总是不确定的。
- * - [[Unevaluable]]:             一个不应该被评估的表达式。
- * - [[CodegenFallback]]:         一个没有实现代码生成并且回退到解释模式的表达式。
- * - [[NullIntolerant]]:          一个不允许空值的表达式（即任何空输入都将导致空输出）。
- * - [[NonSQLExpression]]:        一个通用的基础特征，适用于没有 SQL 表达式表示的表达式。例如，ScalaUDF、ScalaUDAF 和对象 MapObjects 和 Invoke。
- * - [[UserDefinedExpression]]:   用户定义函数的通用基础特征，包括 UDF（User Defined Function）、UDAF（User Defined Aggregate Function）和 UDTF（User Defined Table Function）。
- * - [[HigherOrderFunction]]:     一个通用的基础特征，用于接受一个或多个（lambda）函数的高阶函数，并将它们应用于某些对象。
- *                                该函数生成一些变量，可以由某些 lambda 函数消耗。
- * - [[NamedExpression]]:         一个带有名称的 [[Expression]]。
- * - [[TimeZoneAwareExpression]]: 一个通用的基础特征，用于时区感知的表达式。
- * - [[SubqueryExpression]]:      一个包含 [[org.apache.spark.sql.catalyst.plans.logical.LogicalPlan]] 的表达式的基础接口。
- * - [[LeafExpression]]:         一个没有子节点的表达式。
- * - [[UnaryExpression]]:        一个有一个子节点的表达式。
- * - [[BinaryExpression]]:       一个有两个子节点的表达式。
- * - [[TernaryExpression]]:      一个有三个子节点的表达式。
- * - [[QuaternaryExpression]]:   一个有四个子节点的表达式。
- * - [[BinaryOperator]]:         一个 [[BinaryExpression]] 的特殊情况，要求两个子节点具有相同的输出数据类型。
  *
- * 一些用于类型强制规则的重要特征：
- *
- * - [[ExpectsInputTypes]]:         一个具有预期输入类型的表达式。
- *                                   这个特征通常由运算符表达式（例如 [[Add]]、[[Subtract]]）使用，用于定义没有任何隐式转换的预期输入类型。
- *
- * - [[ImplicitCastInputTypes]]:       一个具有预期输入类型的表达式，这些类型可以使用 [[TypeCoercion.ImplicitTypeCasts]] 进行隐式转换。
- * - [[ComplexTypeMergingExpression]]: 解决复杂表达式（例如 [[CaseWhen]]）的输出类型。
  */
 abstract class Expression extends TreeNode[Expression] {
 
   /**
-   * 当表达式在查询执行之前是静态评估的候选时返回 true。一个典型的用例是：[[org.apache.spark.sql.catalyst.optimizer.ConstantFolding]]
-   * 以下条件用于确定常量折叠的适用性：
-   * 如果 [[Coalesce]] 的所有子节点都是可折叠的，则它是可折叠的
-   * 如果 [[BinaryExpression]] 的左右子节点都是可折叠的，则它是可折叠的
-   * 如果 [[Not]]、[[IsNull]] 或 [[IsNotNull]] 的子节点是可折叠的，则它是可折叠的
-   * 如果 [[Literal]] 是可折叠的
-   * 如果 [[Cast]] 或 [[UnaryMinus]] 的子节点是可折叠的，则它是可折叠的
+   * 数据类型
+   * 表达式计算结果的数据类型
+   * 必须在表达式解析后确定
+   */
+  def dataType: DataType
+
+  /**
+   * 可折叠性
+   * 是否可以在编译时计算
+   * 常量表达式通常是可折叠的
    */
   def foldable: Boolean = false
 
   /**
-   * 当当前表达式对于来自子节点的固定输入始终返回相同的结果时，返回 true。
-   * 非确定性表达式在数量和顺序上不应更改。它们在查询规划过程中不应被评估。
-   *
-   * 请注意，这意味着如果一个表达式：
-   *
-   * 依赖于某些可变的内部状态，或者
-   * 依赖于不是子表达式列表的一部分的某些隐式输入，或者
-   * 具有非确定性的子表达式或子表达式，或者
-   * 它假定输入通过子运算符满足某些特定条件
-   * 则应将其视为非确定性的。
-   *
-   * 一个例子是 SparkPartitionID，它依赖于 TaskContext 返回的分区 id。默认情况下，叶表达式是确定性的，因为 Nil.forall(_.deterministic) 返回 true。
+   * 求值方法
+   * 解释执行模式下的求值方法
+   * 接收输入行，返回计算结果
    */
-  lazy val deterministic: Boolean = children.forall(_.deterministic)
-
-  def nullable: Boolean
-
-  // 为了在懒加载值上调用 super，可以使用以下工作方式
-  @transient
-  private lazy val _references: AttributeSet = AttributeSet.fromAttributeSets(children.map(_.references))
-
-  def references: AttributeSet = _references
-
-  // 返回在给定输入行上评估此表达式的结果。
   def eval(input: InternalRow = null): Any
 
   /**
-   * 返回一个 [[ExprCode]]，其中包含生成在输入行上评估表达式结果的Java源代码。
-   * @param ctx a [[CodegenContext]]
-   * @return [[ExprCode]]
+   * 代码生成
+   * • 生成 Java 代码进行编译执行
+   * • 性能优于解释执行
    */
   def genCode(ctx: CodegenContext): ExprCode = {
     ctx.subExprEliminationExprs.get(ExpressionEquals(this)).map { subExprState =>
@@ -136,6 +134,41 @@ abstract class Expression extends TreeNode[Expression] {
       }
     }
   }
+
+  /**
+   * 当当前表达式对于来自子节点的固定输入始终返回相同的结果时，返回 true。
+   * 非确定性表达式在数量和顺序上不应更改。它们在查询规划过程中不应被评估。
+   *
+   * 请注意，这意味着如果一个表达式：
+   *
+   * 依赖于某些可变的内部状态，或者
+   * 依赖于不是子表达式列表的一部分的某些隐式输入，或者
+   * 具有非确定性的子表达式或子表达式，或者
+   * 它假定输入通过子运算符满足某些特定条件
+   * 则应将其视为非确定性的。
+   *
+   * 一个例子是 SparkPartitionID，它依赖于 TaskContext 返回的分区 id。默认情况下，叶表达式是确定性的，因为 Nil.forall(_.deterministic) 返回 true。
+   */
+  lazy val deterministic: Boolean = children.forall(_.deterministic)
+
+  /**
+   * 类型检查
+   * • 验证输入参数类型是否正确
+   * • 在分析阶段调用
+   */
+  def checkInputDataTypes(): TypeCheckResult = TypeCheckResult.TypeCheckSuccess
+
+  def nullable: Boolean
+
+  // 为了在懒加载值上调用 super，可以使用以下工作方式
+  @transient
+  private lazy val _references: AttributeSet = AttributeSet.fromAttributeSets(children.map(_.references))
+
+  def references: AttributeSet = _references
+
+
+
+
 
   private def reduceCodeSize(ctx: CodegenContext, eval: ExprCode): Unit = {
     // TODO: support whole stage codegen too
@@ -186,11 +219,6 @@ abstract class Expression extends TreeNode[Expression] {
    */
   lazy val resolved: Boolean = childrenResolved && checkInputDataTypes().isSuccess
 
-  /**
-   * 返回评估此表达式的结果的 [[DataType]]。
-   * 查询未解析表达式（即 resolved == false）的 dataType 是无效的。
-   */
-  def dataType: DataType
 
   /**
    * 如果此表达式的所有子项都已解析为特定模式，则返回 true；
@@ -229,11 +257,7 @@ abstract class Expression extends TreeNode[Expression] {
    */
   def semanticHash(): Int = canonicalized.hashCode()
 
-  /**
-   * 检查输入数据类型，如果有效则返回TypeCheckResult.success，如果无效则返回带有错误消息的 TypeCheckResult。
-   * 注意：在 childrenResolved == true 之前调用此方法是无效的。
-   */
-  def checkInputDataTypes(): TypeCheckResult = TypeCheckResult.TypeCheckSuccess
+
 
   /**
    * 返回此表达式名称的用户可见字符串表示形式。

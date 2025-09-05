@@ -167,9 +167,9 @@ object UnresolvedAttribute {
   def quoted(name: String): UnresolvedAttribute = new UnresolvedAttribute(Seq(name))
 
   /**
-   * Creates an [[UnresolvedAttribute]] from a string in an embedded language.  In this case
-   * we treat it as a quoted identifier, except for '.', which must be further quoted using
-   * backticks if it is part of a column name.
+   * 从嵌入式语言中的字符串创建 [[UnresolvedAttribute]]。在这种情况下，
+   * 我们将其视为带引号的标识符，除了 '.'，如果它是列名的一部分，
+   * 则必须使用反引号进一步引用。
    */
   def quotedString(name: String): UnresolvedAttribute =
     new UnresolvedAttribute(parseAttributeName(name))
@@ -317,15 +317,16 @@ abstract class Star extends LeafExpression with NamedExpression {
 
 
 /**
- * Represents all of the input attributes to a given relational operator, for example in
- * "SELECT * FROM ...".
+ * 表示给定关系操作符的所有输入属性，例如在
+ * "SELECT * FROM ..." 中。
  *
- * This is also used to expand structs. For example:
+ * 这也用于展开结构体。例如：
  * "SELECT record.* from (SELECT struct(a,b,c) as record ...)
  *
- * @param target an optional name that should be the target of the expansion.  If omitted all
- *              targets' columns are produced. This can either be a table name or struct name. This
- *              is a list of identifiers that is the path of the expansion.
+ * @param target
+ *    一个可选的名称，应该是展开的目标。如果省略，则产生所有
+ *              目标的列。这可以是表名或结构体名。这是
+ *              展开路径的标识符列表。
  */
 case class UnresolvedStar(target: Option[Seq[String]]) extends Star with Unevaluable {
 

@@ -126,8 +126,7 @@ object FileFormatWriter extends Logging {
     val writerBucketSpec = bucketSpec.map { spec =>
       val bucketColumns = spec.bucketColumnNames.map(c => dataColumns.find(_.name == c).get)
 
-      if (options.getOrElse(BucketingUtils.optionForHiveCompatibleBucketWrite, "false") ==
-        "true") {
+      if (options.getOrElse(BucketingUtils.optionForHiveCompatibleBucketWrite, "false") == "true") {
         // Hive bucketed table: use `HiveHash` and bitwise-and as bucket id expression.
         // Without the extra bitwise-and operation, we can get wrong bucket id when hash value of
         // columns is negative. See Hive implementation in
@@ -181,19 +180,51 @@ object FileFormatWriter extends Logging {
       statsTrackers = statsTrackers
     )
 
-    // We should first sort by partition columns, then bucket id, and finally sorting columns.
-    val requiredOrdering =
-      partitionColumns ++ writerBucketSpec.map(_.bucketIdExpression) ++ sortColumns
+    /***
+     * 判断是否要对 RDD 进行预排序
+     */
+
+    // (动态分区列, 桶ID表达式, 表定义的排序列)
+    val requiredOrdering =  partitionColumns ++ writerBucketSpec.map(_.bucketIdExpression) ++ sortColumns
+
     // the sort order doesn't matter
+    // 从物理计划中获取当前数据的排序信息
+    // • 每个 SparkPlan 节点都有 outputOrdering: Seq[SortOrder] 属性
+    // • 表示该节点输出数据的排序保证
     val actualOrdering = empty2NullPlan.outputOrdering.map(_.child)
+
+    // // 实际排序列数不足
     val orderingMatched = if (requiredOrdering.length > actualOrdering.length) {
       false
     } else {
+      // // 逐一比较前N个排序表达式是否语义相等
       requiredOrdering.zip(actualOrdering).forall {
         case (requiredOrder, childOutputOrder) =>
-          requiredOrder.semanticEquals(childOutputOrder)
+          requiredOrder.semanticEquals(childOutputOrder) // 语义相等性检查
       }
     }
+
+    /***
+     * 场景1：完全匹配
+     * scala
+     * // 需要：[col_a, col_b, col_c]
+     * // 实际：[col_a, col_b, col_c, col_d]
+     * // 结果：orderingMatched = true（前3个匹配即可）
+     *
+     *
+     * 场景2：部分匹配
+     * scala
+     * // 需要：[col_a, col_b, col_c]
+     * // 实际：[col_a, col_x, col_c]
+     * // 结果：orderingMatched = false（第2个不匹配）
+     *
+     *
+     * 场景3：数量不足
+     * scala
+     * // 需要：[col_a, col_b, col_c]
+     * // 实际：[col_a, col_b]
+     * // 结果：orderingMatched = false（实际排序列数不足）
+     */
 
     SQLExecution.checkSQLExecutionId(sparkSession)
 
