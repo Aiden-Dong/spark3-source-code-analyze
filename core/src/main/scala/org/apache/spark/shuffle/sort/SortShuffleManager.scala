@@ -28,47 +28,30 @@ import org.apache.spark.shuffle.api.ShuffleExecutorComponents
 import org.apache.spark.util.collection.OpenHashSet
 
 /**
- * In sort-based shuffle, incoming records are sorted according to their target partition ids, then
- * written to a single map output file. Reducers fetch contiguous regions of this file in order to
- * read their portion of the map output. In cases where the map output data is too large to fit in
- * memory, sorted subsets of the output can be spilled to disk and those on-disk files are merged
- * to produce the final output file.
+ * 在基于排序的 shuffle 中，传入的记录根据其目标分区 ID 进行排序，然后写入单个 map 输出文件。Reducer 按顺序获取该文件的连续区域来读取其对应的 map 输出部分。当 map 输出数据太大无法
+ * 放入内存时，输出的已排序子集可以溢写到磁盘，这些磁盘文件会被合并以产生最终的输出文件。
  *
- * Sort-based shuffle has two different write paths for producing its map output files:
+ * 两种写入路径：
  *
- *  - Serialized sorting: used when all three of the following conditions hold:
- *    1. The shuffle dependency specifies no map-side combine.
- *    2. The shuffle serializer supports relocation of serialized values (this is currently
- *       supported by KryoSerializer and Spark SQL's custom serializers).
- *    3. The shuffle produces fewer than or equal to 16777216 output partitions.
- *  - Deserialized sorting: used to handle all other cases.
+ * 基于排序的 shuffle 有两种不同的写入路径来生成 map 输出文件：
  *
- * -----------------------
- * Serialized sorting mode
- * -----------------------
+ * 1. 序列化排序：当满足以下三个条件时使用：
+ * • Shuffle 依赖不指定 map 端合并
+ * • Shuffle 序列化器支持序列化值的重定位（目前 KryoSerializer 和 Spark SQL 的自定义序列化器支持）
+ * • Shuffle 产生的输出分区数 ≤ 16,777,216
  *
- * In the serialized sorting mode, incoming records are serialized as soon as they are passed to the
- * shuffle writer and are buffered in a serialized form during sorting. This write path implements
- * several optimizations:
+ * 2. 反序列化排序：用于处理所有其他情况
  *
- *  - Its sort operates on serialized binary data rather than Java objects, which reduces memory
- *    consumption and GC overheads. This optimization requires the record serializer to have certain
- *    properties to allow serialized records to be re-ordered without requiring deserialization.
- *    See SPARK-4550, where this optimization was first proposed and implemented, for more details.
+ * 序列化排序模式的优化：
  *
- *  - It uses a specialized cache-efficient sorter ([[ShuffleExternalSorter]]) that sorts
- *    arrays of compressed record pointers and partition ids. By using only 8 bytes of space per
- *    record in the sorting array, this fits more of the array into cache.
+ * 在序列化排序模式中，传入的记录一旦传递给 shuffle writer 就立即被序列化，并在排序期间以序列化形式缓冲。此写入路径实现了几个优化：
  *
- *  - The spill merging procedure operates on blocks of serialized records that belong to the same
- *    partition and does not need to deserialize records during the merge.
+ * • **内存优化**：排序操作直接在序列化的二进制数据上进行，而不是 Java 对象，减少了内存消耗和 GC 开销
+ * • **缓存效率**：使用专门的缓存高效排序器（ShuffleExternalSorter），对压缩记录指针和分区 ID 的数组进行排序。每条记录在排序数组中只使用 8 字节空间
+ * • **溢写合并优化**：溢写合并过程在属于同一分区的序列化记录块上操作，合并期间无需反序列化记录
+ * • **数据拷贝优化**：当溢写压缩编解码器支持压缩数据连接时，溢写合并只需连接序列化和压缩的溢写分区即可产生最终输出分区，可以使用高效的数据拷贝方法如 NIO 的 transferTo
  *
- *  - When the spill compression codec supports concatenation of compressed data, the spill merge
- *    simply concatenates the serialized and compressed spill partitions to produce the final output
- *    partition.  This allows efficient data copying methods, like NIO's `transferTo`, to be used
- *    and avoids the need to allocate decompression or copying buffers during the merge.
- *
- * For more details on these optimizations, see SPARK-7081.
+ * 这些优化的更多详细信息可参考 SPARK-4550 和 SPARK-7081。
  */
 private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager with Logging {
 

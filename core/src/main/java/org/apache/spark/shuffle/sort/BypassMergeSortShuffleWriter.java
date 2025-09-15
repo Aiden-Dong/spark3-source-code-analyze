@@ -57,25 +57,30 @@ import org.apache.spark.storage.*;
 import org.apache.spark.util.Utils;
 
 /**
- * This class implements sort-based shuffle's hash-style shuffle fallback path. This write path
- * writes incoming records to separate files, one file per reduce partition, then concatenates these
- * per-partition files to form a single output file, regions of which are served to reducers.
- * Records are not buffered in memory. It writes output in a format
- * that can be served / consumed via {@link org.apache.spark.shuffle.IndexShuffleBlockResolver}.
- * <p>
- * This write path is inefficient for shuffles with large numbers of reduce partitions because it
- * simultaneously opens separate serializers and file streams for all partitions. As a result,
- * {@link SortShuffleManager} only selects this write path when
- * <ul>
- *    <li>no map-side combine is specified, and</li>
- *    <li>the number of partitions is less than or equal to
- *      <code>spark.shuffle.sort.bypassMergeThreshold</code>.</li>
- * </ul>
+ * 类功能概述：
  *
- * This code used to be part of {@link org.apache.spark.util.collection.ExternalSorter} but was
- * refactored into its own class in order to reduce code complexity; see SPARK-7855 for details.
- * <p>
- * There have been proposals to completely remove this code path; see SPARK-6026 for details.
+ * 这个类实现了基于排序的 shuffle 的哈希风格 shuffle 回退路径。此写入路径将传入的记录写入单独的文件，每个 reduce 分区一个文件，然后将这些按分区的文件连接起来形成单个输出文件，
+ * 其中的区域提供给 reducer。记录不会在内存中缓冲。它以可通过 IndexShuffleBlockResolver 提供/消费的格式写入输出。
+ *
+ * 性能特点：
+ *
+ * 对于具有大量 reduce 分区的 shuffle，此写入路径效率低下，因为它同时为所有分区打开单独的序列化器和文件流。因此，SortShuffleManager 仅在以下情况下选择此写入路径：
+ *
+ * • 未指定 map 端合并，且
+ * • 分区数小于或等于 spark.shuffle.sort.bypassMergeThreshold
+ *
+ * 代码历史：
+ *
+ * 此代码曾经是 ExternalSorter 的一部分，但为了降低代码复杂性而重构为独立的类；详见 SPARK-7855。
+ *
+ * 曾有提议完全移除此代码路径；详见 SPARK-6026。
+ *
+ * 核心机制：
+ *
+ * • 为每个分区创建独立的文件写入器
+ * • 不进行内存缓冲，直接写入磁盘
+ * • 最后将所有分区文件合并为单个输出文件
+ * • 适用于分区数较少且不需要 map 端聚合的场景
  */
 final class BypassMergeSortShuffleWriter<K, V>
   extends ShuffleWriter<K, V>
@@ -134,9 +139,13 @@ final class BypassMergeSortShuffleWriter<K, V>
   @Override
   public void write(Iterator<Product2<K, V>> records) throws IOException {
     assert (partitionWriters == null);
+
+    // 创建一个能处理 numPartitions 个分区输出的写入器
     ShuffleMapOutputWriter mapOutputWriter = shuffleExecutorComponents
         .createMapOutputWriter(shuffleId, mapId, numPartitions);
+
     try {
+      // 如果输入为空，直接提交空分区并返回，避免后续处理
       if (!records.hasNext()) {
         partitionLengths = mapOutputWriter.commitAllPartitions(
           ShuffleChecksumHelper.EMPTY_CHECKSUM_VALUE).getPartitionLengths();
@@ -144,17 +153,22 @@ final class BypassMergeSortShuffleWriter<K, V>
           blockManager.shuffleServerId(), partitionLengths, mapId);
         return;
       }
+
+
+      //  序列化器和分区写入器初始化, 为 每个分区创建独立的磁盘写入器数组
       final SerializerInstance serInstance = serializer.newInstance();
       final long openStartTime = System.nanoTime();
       partitionWriters = new DiskBlockObjectWriter[numPartitions];
       partitionWriterSegments = new FileSegment[numPartitions];
+
+      // 为每个分区创建临时文件和写入器
       for (int i = 0; i < numPartitions; i++) {
-        final Tuple2<TempShuffleBlockId, File> tempShuffleBlockIdPlusFile =
-            blockManager.diskBlockManager().createTempShuffleBlock();
+        final Tuple2<TempShuffleBlockId, File> tempShuffleBlockIdPlusFile = blockManager.diskBlockManager().createTempShuffleBlock();
+
         final File file = tempShuffleBlockIdPlusFile._2();
         final BlockId blockId = tempShuffleBlockIdPlusFile._1();
-        DiskBlockObjectWriter writer =
-          blockManager.getDiskWriter(blockId, file, serInstance, fileBufferSize, writeMetrics);
+        DiskBlockObjectWriter writer = blockManager.getDiskWriter(blockId, file, serInstance, fileBufferSize, writeMetrics);
+
         if (partitionChecksums.length > 0) {
           writer.setChecksum(partitionChecksums[i]);
         }
@@ -165,21 +179,26 @@ final class BypassMergeSortShuffleWriter<K, V>
       // included in the shuffle write time.
       writeMetrics.incWriteTime(System.nanoTime() - openStartTime);
 
+      // 数据直接顺序落盘， 无内存缓冲区
       while (records.hasNext()) {
         final Product2<K, V> record = records.next();
         final K key = record._1();
         partitionWriters[partitioner.getPartition(key)].write(key, record._2());
       }
 
+      // 写完以后获取写入文件元信息
+      // FileSegment(val file: File, val offset: Long, val length: Long)
       for (int i = 0; i < numPartitions; i++) {
         try (DiskBlockObjectWriter writer = partitionWriters[i]) {
           partitionWriterSegments[i] = writer.commitAndGet();
         }
       }
 
+      // 将所有分区文件合并成单个输出文件
       partitionLengths = writePartitionedData(mapOutputWriter);
-      mapStatus = MapStatus$.MODULE$.apply(
-        blockManager.shuffleServerId(), partitionLengths, mapId);
+
+      mapStatus = MapStatus$.MODULE$.apply(blockManager.shuffleServerId(), partitionLengths, mapId);
+
     } catch (Exception e) {
       try {
         mapOutputWriter.abort(e);

@@ -417,15 +417,18 @@ final class ShuffleExternalSorter extends MemoryConsumer implements ShuffleCheck
 
     // for tests
     assert(inMemSorter != null);
+
+    // TODO-1 : 检查是否需要溢出
     if (inMemSorter.numRecords() >= numElementsForSpillThreshold) {
       logger.info("Spilling data because number of spilledRecords crossed the threshold " +
         numElementsForSpillThreshold);
-      spill();
+      spill();  // 强制溢出
     }
-    // 检查指针数组是否有足够空间存放指针数据
+    //  扩展指针数组（如果需要），检查指针数组是否有足够空间存放指针数据
     growPointerArrayIfNecessary();
-    final int uaoSize = UnsafeAlignedOffset.getUaoSize();
-    // Need 4 or 8 bytes to store the record length.
+
+    // 分配页面空间
+    final int uaoSize = UnsafeAlignedOffset.getUaoSize();   // 这行代码是 Spark 为了在不同 CPU 架构上都能高效运行而做的跨平台内存对齐优化，确保记录存储格式在所有平台上都是最优的
     final int required = length + uaoSize;
     acquireNewPageIfNecessary(required);
 
@@ -436,6 +439,8 @@ final class ShuffleExternalSorter extends MemoryConsumer implements ShuffleCheck
     pageCursor += uaoSize;
     Platform.copyMemory(recordBase, recordOffset, base, pageCursor, length);
     pageCursor += length;
+
+    // 在内存中记录当前分区对应数据位置
     inMemSorter.insertRecord(recordAddress, partitionId);
   }
 

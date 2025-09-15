@@ -63,6 +63,27 @@ import org.apache.spark.storage.TimeTrackingOutputStream;
 import org.apache.spark.unsafe.Platform;
 import org.apache.spark.util.Utils;
 
+/***
+ * 内存管理：
+ * • 使用 Tungsten 内存管理，支持堆外内存
+ * • 页面式内存分配，避免内存碎片
+ * • 基于指针的排序，减少数据移动
+ *
+ * 排序机制：
+ * • 内存中按 (partitionId, recordAddress) 排序
+ * • 使用基数排序或 TimSort
+ * • 排序的是指针，不是实际数据
+ *
+ * 溢出策略：
+ * • 记录数达到阈值时强制溢出
+ * • 内存不足时触发溢出
+ * • 每次溢出生成一个排序文件
+ *
+ * 文件合并：
+ * • 支持 NIO transferTo 快速合并
+ * • 支持压缩和加密
+ * • 按分区顺序合并多个溢出文件
+ */
 @Private
 public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
@@ -88,7 +109,8 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   private final int inputBufferSizeInBytes;
 
   @Nullable private MapStatus mapStatus;
-  @Nullable private ShuffleExternalSorter sorter;
+
+  @Nullable private ShuffleExternalSorter sorter;           // 核心排序器
   @Nullable private long[] partitionLengths;
   private long peakMemoryUsedBytes = 0;
 
@@ -239,9 +261,11 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   @VisibleForTesting
   void insertRecordIntoSorter(Product2<K, V> record) throws IOException {
     assert(sorter != null);
-    final K key = record._1();
-    final int partitionId = partitioner.getPartition(key);
-    // 首先将数据序列化
+
+    final K key = record._1();   // 获取 key
+    final int partitionId = partitioner.getPartition(key);     // 获取 分区ID
+
+    // 首先将 KV数据 序列化
     serBuffer.reset();
     serOutputStream.writeKey(key, OBJECT_CLASS_TAG);
     serOutputStream.writeValue(record._2(), OBJECT_CLASS_TAG);
