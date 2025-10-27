@@ -43,10 +43,12 @@ object CTESubstitution extends Rule[LogicalPlan] {
     if (!plan.containsPattern(UNRESOLVED_WITH)) {
       return plan
     }
-    val isCommand = plan.exists {
+
+    val isCommand = plan.exists {   // insert 类型返回 true
       case _: Command | _: ParsedStatement | _: InsertIntoDir => true
       case _ => false
     }
+
     val cteDefs = ArrayBuffer.empty[CTERelationDef]
     val (substituted, firstSubstituted) =
       LegacyBehaviorPolicy.withName(conf.getConf(LEGACY_CTE_PRECEDENCE_POLICY)) match {
@@ -66,11 +68,11 @@ object CTESubstitution extends Rule[LogicalPlan] {
       var done = false
       substituted.resolveOperatorsWithPruning(_ => !done) {
         case p if p eq firstSubstituted.get =>
-          // `firstSubstituted` is the parent of all other CTEs (if any).
+          // `firstSubstituted` 是所有其他 CTE 的父节点（如果有的话）。
           done = true
           WithCTE(p, cteDefs.toSeq)
         case p if p.children.count(_.containsPattern(CTE)) > 1 =>
-          // This is the first common parent of all CTEs.
+          // 这是所有 CTE 的第一个公共父节点。
           done = true
           WithCTE(p, cteDefs.toSeq)
       }
@@ -78,15 +80,13 @@ object CTESubstitution extends Rule[LogicalPlan] {
   }
 
   /**
-   * Spark 3.0 changes the CTE relations resolution, and inner relations take precedence. This is
-   * correct but we need to warn users about this behavior change under EXCEPTION mode, when we see
-   * CTE relations with conflicting names.
+   * Spark 3.0 改变了 CTE 关系的解析方式，内部关系优先。这是正确的，但在 EXCEPTION 模式下，
+   * 当我们看到具有冲突名称的 CTE 关系时，需要警告用户这种行为变化。
    *
-   * Note that, before Spark 3.0 the parser didn't support CTE in the FROM clause. For example,
-   * `WITH ... SELECT * FROM (WITH ... SELECT ...)` was not supported. We should not fail for this
-   * case, as Spark versions before 3.0 can't run it anyway. The parameter `startOfQuery` is used
-   * to indicate where we can define CTE relations before Spark 3.0, and we should only check
-   * name conflicts when `startOfQuery` is true.
+   * 注意，在 Spark 3.0 之前，解析器不支持 FROM 子句中的 CTE。例如
+   * `WITH ... SELECT * FROM (WITH ... SELECT ...)` 不被支持。我们不应该为这种情况失败，
+   *  因为 3.0 之前的 Spark 版本无论如何都无法运行它。参数 `startOfQuery` 用于指示在 Spark 3.0 之前我们可以定义 CTE 关系的位置，
+   *  我们只应该在 `startOfQuery` 为 true 时检查名称冲突。
    */
   private def assertNoNameConflictsInCTE(
       plan: LogicalPlan,
@@ -102,8 +102,8 @@ object CTESubstitution extends Rule[LogicalPlan] {
             if (startOfQuery && outerCTERelationNames.exists(resolver(_, name))) {
               throw QueryCompilationErrors.ambiguousRelationAliasNameInNestedCTEError(name)
             }
-            // CTE relation is defined as `SubqueryAlias`. Here we skip it and check the child
-            // directly, so that `startOfQuery` is set correctly.
+            // CTE 关系定义为 `SubqueryAlias`。这里我们跳过它并直接检查子节点，
+            // 以便正确设置 `startOfQuery`。
             assertNoNameConflictsInCTE(relation.child, newNames.toSeq)
             newNames += name
         }
@@ -128,19 +128,16 @@ object CTESubstitution extends Rule[LogicalPlan] {
   }
 
   /**
-   * Traverse the plan and expression nodes as a tree and replace matching references with CTE
-   * references if `isCommand` is false, otherwise with the query plans of the corresponding
-   * CTE definitions.
-   * - If the rule encounters a WITH node then it substitutes the child of the node with CTE
-   *   definitions of the node right-to-left order as a definition can reference to a previous
-   *   one.
-   *   For example the following query is valid:
+   * 遍历计划和表达式节点作为树，如果 `isCommand` 为 false，则用 CTE 引用替换匹配的引用，否则用相应 CTE 定义的查询计划替换。
+   * - 如果规则遇到 WITH 节点，则用该节点的 CTE 定义从右到左的顺序替换该节点的子节点，
+   *   因为定义可以引用前一个定义。
+   *   例如，以下查询是有效的：
    *   WITH
    *     t AS (SELECT 1),
    *     t2 AS (SELECT * FROM t)
    *   SELECT * FROM t2
-   * - If a CTE definition contains an inner WITH node then substitution of inner should take
-   *   precedence because it can shadow an outer CTE definition.
+   * - 如果 CTE 定义包含内部 WITH 节点，则内部的替换应该优先，因为它可以遮蔽外部 CTE 定义。
+   *   例如，以下查询应该返回 2：
    *   For example the following query should return 2:
    *   WITH
    *     t AS (SELECT 1),
@@ -149,44 +146,48 @@ object CTESubstitution extends Rule[LogicalPlan] {
    *       SELECT * FROM t
    *     )
    *   SELECT * FROM t2
-   * - If a CTE definition contains a subquery that contains an inner WITH node then substitution
-   *   of inner should take precedence because it can shadow an outer CTE definition.
-   *   For example the following query should return 2:
+   * - 如果 CTE 定义包含一个包含内部 WITH 节点的子查询，则内部的替换应该优先，
+   *   因为它可以遮蔽外部 CTE 定义。
+   *   例如，以下查询应该返回 2：
    *   WITH t AS (SELECT 1 AS c)
    *   SELECT max(c) FROM (
    *     WITH t AS (SELECT 2 AS c)
    *     SELECT * FROM t
    *   )
-   * - If a CTE definition contains a subquery expression that contains an inner WITH node then
-   *   substitution of inner should take precedence because it can shadow an outer CTE
-   *   definition.
-   *   For example the following query should return 2:
+   * - 如果 CTE 定义包含一个包含内部 WITH 节点的子查询表达式，则内部的替换应该优先，
+   *   因为它可以遮蔽外部 CTE 定义。
+   *   例如，以下查询应该返回 2:
    *   WITH t AS (SELECT 1)
    *   SELECT (
    *     WITH t AS (SELECT 2)
    *     SELECT * FROM t
    *   )
-   * @param plan the plan to be traversed
-   * @param isCommand if this is a command
-   * @param outerCTEDefs already resolved outer CTE definitions with names
-   * @param cteDefs all accumulated CTE definitions
-   * @return the plan where CTE substitution is applied and optionally the last substituted `With`
-   *         where CTE definitions will be gathered to
+   * @param plan 要遍历的计划
+   * @param isCommand 是否为命令
+   * @param outerCTEDefs 已解析的外部 CTE 定义及其名称
+   * @param cteDefs 所有累积的 CTE 定义
+   * @return 应用 CTE 替换的计划，以及可选的最后替换的 `With`，CTE 定义将被收集到该处
    */
   private def traverseAndSubstituteCTE(
-      plan: LogicalPlan,
+      plan: LogicalPlan,                     // sh
       isCommand: Boolean,
       outerCTEDefs: Seq[(String, CTERelationDef)],
       cteDefs: ArrayBuffer[CTERelationDef]): (LogicalPlan, Option[LogicalPlan]) = {
+
     var firstSubstituted: Option[LogicalPlan] = None
+
+    // 从最外层开始向内查找  with 语句
     val newPlan = plan.resolveOperatorsDownWithPruning(
         _.containsAnyPattern(UNRESOLVED_WITH, PLAN_EXPRESSION)) {
+
       case UnresolvedWith(child: LogicalPlan, relations) =>
+        // 解决所有的 CTE - relation
         val resolvedCTERelations =
           resolveCTERelations(relations, isLegacy = false, isCommand, outerCTEDefs, cteDefs) ++
             outerCTEDefs
+
         val substituted = substituteCTE(
-          traverseAndSubstituteCTE(child, isCommand, resolvedCTERelations, cteDefs)._1,
+          traverseAndSubstituteCTE(child, isCommand, resolvedCTERelations, cteDefs)._1,   // 解决子节点的CTE 问题
           isCommand,
           resolvedCTERelations)
         if (firstSubstituted.isEmpty) {
@@ -203,7 +204,7 @@ object CTESubstitution extends Rule[LogicalPlan] {
   }
 
   private def resolveCTERelations(
-      relations: Seq[(String, SubqueryAlias)],
+      relations: Seq[(String, SubqueryAlias)],     // 当前
       isLegacy: Boolean,
       isCommand: Boolean,
       outerCTEDefs: Seq[(String, CTERelationDef)],
@@ -215,42 +216,41 @@ object CTESubstitution extends Rule[LogicalPlan] {
     }
     for ((name, relation) <- relations) {
       val innerCTEResolved = if (isLegacy) {
-        // In legacy mode, outer CTE relations take precedence. Here we don't resolve the inner
-        // `With` nodes, later we will substitute `UnresolvedRelation`s with outer CTE relations.
-        // Analyzer will run this rule multiple times until all `With` nodes are resolved.
+        // 在兼容模式下，外部 CTE 关系优先。这里我们不解析内部的 `With` 节点，
+        // 稍后我们将用外部 CTE 关系替换 `UnresolvedRelation`。
+        // 分析器将多次运行此规则，直到所有 `With` 节点都被解析。
         relation
       } else {
-        // A CTE definition might contain an inner CTE that has a higher priority, so traverse and
-        // substitute CTE defined in `relation` first.
-        // NOTE: we must call `traverseAndSubstituteCTE` before `substituteCTE`, as the relations
-        // in the inner CTE have higher priority over the relations in the outer CTE when resolving
-        // inner CTE relations. For example:
+        // CTE 定义可能包含具有更高优先级的内部 CTE，因此首先遍历并替换 `relation` 中定义的 CTE。
+        // 注意：我们必须在 `substituteCTE` 之前调用 `traverseAndSubstituteCTE`，因为在解析内部 CTE 关系时，
+        // 内部 CTE 中的关系比外部 CTE 中的关系具有更高的优先级。例如：
+        //
         // WITH t1 AS (SELECT 1)
         // t2 AS (
         //   WITH t1 AS (SELECT 2)
         //   WITH t3 AS (SELECT * FROM t1)
         // )
-        // t3 should resolve the t1 to `SELECT 2` instead of `SELECT 1`.
+        // t3 应该将 t1 解析为 `SELECT 2` 而不是 `SELECT 1`。
         traverseAndSubstituteCTE(relation, isCommand, resolvedCTERelations, cteDefs)._1
       }
-      // CTE definition can reference a previous one
+      // CTE 定义可以引用前一个定义
       val substituted = substituteCTE(innerCTEResolved, isLegacy || isCommand, resolvedCTERelations)
       val cteRelation = CTERelationDef(substituted)
       if (!(isLegacy || isCommand)) {
         cteDefs += cteRelation
       }
-      // Prepending new CTEs makes sure that those have higher priority over outer ones.
+      // 前置新的 CTE 确保它们比外部的 CTE 具有更高的优先级。
       resolvedCTERelations +:= (name -> cteRelation)
     }
     resolvedCTERelations
   }
 
-  private def substituteCTE(
-      plan: LogicalPlan,
-      alwaysInline: Boolean,
-      cteRelations: Seq[(String, CTERelationDef)]): LogicalPlan =
+  // 这个方法是CTE替换的核心执行器，负责将UnresolvedRelation替换为具体的CTE实现
+  private def substituteCTE(plan: LogicalPlan, alwaysInline: Boolean, cteRelations: Seq[(String, CTERelationDef)]): LogicalPlan =
+
     plan.resolveOperatorsUpWithPruning(
         _.containsAnyPattern(RELATION_TIME_TRAVEL, UNRESOLVED_RELATION, PLAN_EXPRESSION)) {
+
       case RelationTimeTravel(UnresolvedRelation(Seq(table), _, _), _, _)
         if cteRelations.exists(r => plan.conf.resolver(r._1, table)) =>
         throw QueryCompilationErrors.timeTravelUnsupportedError("subqueries from WITH clause")
@@ -260,13 +260,13 @@ object CTESubstitution extends Rule[LogicalPlan] {
           if (alwaysInline) {
             d.child
           } else {
-            // Add a `SubqueryAlias` for hint-resolving rules to match relation names.
+            // 为提示解析规则添加 `SubqueryAlias` 以匹配关系名称。
             SubqueryAlias(table, CTERelationRef(d.id, d.resolved, d.output))
           }
         }.getOrElse(u)
 
       case other =>
-        // This cannot be done in ResolveSubquery because ResolveSubquery does not know the CTE.
+        // 这不能在 ResolveSubquery 中完成，因为 ResolveSubquery 不知道 CTE。
         other.transformExpressionsWithPruning(_.containsPattern(PLAN_EXPRESSION)) {
           case e: SubqueryExpression =>
             e.withNewPlan(apply(substituteCTE(e.plan, alwaysInline, cteRelations)))

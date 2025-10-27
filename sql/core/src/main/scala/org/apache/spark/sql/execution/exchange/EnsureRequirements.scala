@@ -28,52 +28,76 @@ import org.apache.spark.sql.execution.joins.{ShuffledHashJoinExec, SortMergeJoin
 import org.apache.spark.sql.internal.SQLConf
 
 /**
- * 确保输入数据的 [[org.apache.spark.sql.catalyst.plans.physical.Partitioning Partitioning]]
- * 满足每个操作符的 [[org.apache.spark.sql.catalyst.plans.physical.Distribution Distribution]] 要求，
- * 在必要时插入 [[ShuffleExchangeExec]] 操作符。同时确保满足输入分区排序的要求。
+ * EnsureRequirements 是 Spark SQL 物理计划优化阶段的一个关键规则，主要负责：
+ *
+ * 1. 分布要求保证：确保每个物理操作符的输入数据满足其 Distribution 要求
+ * 2. 排序要求保证：确保输入数据满足操作符的排序要求
+ * 3. Shuffle 优化：在必要时插入 ShuffleExchange 或 BroadcastExchange
+ * 4. Join 键重排序：优化 Join 操作的键顺序以减少不必要的 Shuffle
  */
 case class EnsureRequirements(
     optimizeOutRepartition: Boolean = true,
     requiredDistribution: Option[Distribution] = None)
   extends Rule[SparkPlan] {
 
+  /***
+   * 功能：确保子节点满足分布和排序要求
+   * • **第一步**：为每个子节点插入必要的 Exchange 操作
+   * • **第二步**：处理多子节点的协同分区优化
+   * • **第三步**：添加 SortExec 满足排序要求
+   */
   private def ensureDistributionAndOrdering(
-      originalChildren: Seq[SparkPlan],
-      requiredChildDistributions: Seq[Distribution],
-      requiredChildOrderings: Seq[Seq[SortOrder]],
-      shuffleOrigin: ShuffleOrigin): Seq[SparkPlan] = {
+      originalChildren: Seq[SparkPlan],                    // 原始子节点
+      requiredChildDistributions: Seq[Distribution],       // 每个子节点需要的数据分布
+      requiredChildOrderings: Seq[Seq[SortOrder]],         // 每个子节点需要的排序
+      shuffleOrigin: ShuffleOrigin): Seq[SparkPlan] = {    // 每个子节点的 Shuffle 要求
+
     assert(requiredChildDistributions.length == originalChildren.length)
     assert(requiredChildOrderings.length == originalChildren.length)
-    // Ensure that the operator's children satisfy their output distribution requirements.
+
+    //////////////////////////////
+    // 第一阶段：满足基本分布要求  //
+    //////////////////////////////
     var children = originalChildren.zip(requiredChildDistributions).map {
+
+      // // 已经满足要求，不需要额外操作
       case (child, distribution) if child.outputPartitioning.satisfies(distribution) =>
         child
+
+      // 需要广播
       case (child, BroadcastDistribution(mode)) =>
         BroadcastExchangeExec(mode, child)
+
+      // 子节点的分区模式跟数据分布模式不一样， 需要插入 ShuffleExchangeExec 节点
+      // 如果 TableScanA 输出是 SinglePartition，但需要 ClusteredDistribution([col1])
+      // 则插入 ShuffleExchangeExec(HashPartitioning([col1], 200), TableScanA)
       case (child, distribution) =>
         val numPartitions = distribution.requiredNumPartitions
           .getOrElse(conf.numShufflePartitions)
+
         ShuffleExchangeExec(distribution.createPartitioning(numPartitions), child, shuffleOrigin)
     }
 
-    // Get the indexes of children which have specified distribution requirements and need to be
-    // co-partitioned.
+    // 第二阶段：处理多子节点的协同分区
+
+    // 找出需要 ClusteredDistribution 的子节点索引
     val childrenIndexes = requiredChildDistributions.zipWithIndex.filter {
       case (_: ClusteredDistribution, _) => true
       case _ => false
     }.map(_._2)
 
-    // Special case: if all sides of the join are single partition
+    // 检查是否所有相关子节点都是单分区（
     val allSinglePartition =
       childrenIndexes.forall(children(_).outputPartitioning == SinglePartition)
 
-    // If there are more than one children, we'll need to check partitioning & distribution of them
-    // and see if extra shuffles are necessary.
+
     if (childrenIndexes.length > 1 && !allSinglePartition) {
+
       val specs = childrenIndexes.map(i => {
         val requiredDist = requiredChildDistributions(i)
-        assert(requiredDist.isInstanceOf[ClusteredDistribution],
-          s"Expected ClusteredDistribution but found ${requiredDist.getClass.getSimpleName}")
+
+        assert(requiredDist.isInstanceOf[ClusteredDistribution], s"Expected ClusteredDistribution but found ${requiredDist.getClass.getSimpleName}")
+
         i -> children(i).outputPartitioning.createShuffleSpec(
           requiredDist.asInstanceOf[ClusteredDistribution])
       }).toMap
@@ -104,14 +128,18 @@ case class EnsureRequirements(
       //   HashPartitioning(5) <-> HashPartitioning(6)
       // while `spark.sql.shuffle.partitions` is 10, we'll only re-shuffle the left side and make it
       // HashPartitioning(6).
+
+      // 判断是否需要考虑最小并行度（当所有子节点都需要重新 shuffle 时）
       val shouldConsiderMinParallelism = specs.forall(p =>
         !p._2.canCreatePartitioning || children(p._1).isInstanceOf[ShuffleExchangeLike]
       )
-      // Choose all the specs that can be used to shuffle other children
+      // 选择可以用来创建分区的候选规格
       val candidateSpecs = specs
           .filter(_._2.canCreatePartitioning)
           .filter(p => !shouldConsiderMinParallelism ||
               children(p._1).outputPartitioning.numPartitions >= conf.defaultNumShufflePartitions)
+
+      // 寻找最优的分区规则
       val bestSpecOpt = if (candidateSpecs.isEmpty) {
         None
       } else {
@@ -140,6 +168,7 @@ case class EnsureRequirements(
             specs(a).isCompatibleWith(specs(b))
       }
 
+      // 第四阶段：应用最优规格进行重新分区
       children = children.zip(requiredChildDistributions).zipWithIndex.map {
         case ((child, _), idx) if allCompatible || !childrenIndexes.contains(idx) =>
           child
@@ -167,7 +196,7 @@ case class EnsureRequirements(
       }
     }
 
-    // Now that we've performed any necessary shuffles, add sorts to guarantee output orderings:
+    // 第五阶段：确保排序要求
     children = children.zip(requiredChildOrderings).map { case (child, requiredOrdering) =>
       // If child.outputOrdering already satisfies the requiredOrdering, we do not need to sort.
       if (SortOrder.orderingSatisfies(child.outputOrdering, requiredOrdering)) {
@@ -180,6 +209,11 @@ case class EnsureRequirements(
     children
   }
 
+  /****
+   * 功能：检查 KeyGroupedShuffleSpec 是否有效
+   * • 验证分区表达式与聚类表达式的匹配关系
+   * • 根据 REQUIRE_ALL_CLUSTER_KEYS_FOR_CO_PARTITION 配置决定检查严格程度
+   */
   private def checkKeyGroupedSpec(shuffleSpec: ShuffleSpec): Boolean = {
     def check(spec: KeyGroupedShuffleSpec): Boolean = {
       val attributes = spec.partitioning.expressions.flatMap(_.collectLeaves())
@@ -200,6 +234,12 @@ case class EnsureRequirements(
     }
   }
 
+  /****
+   * 尝试重排序 Join 键以匹配期望顺序
+   * • 构建表达式到位置的映射
+   * • 按期望顺序重新组织左右键
+   * • 返回 None 表示无法重排序
+   */
   private def reorder(
       leftKeys: IndexedSeq[Expression],
       rightKeys: IndexedSeq[Expression],
@@ -244,6 +284,12 @@ case class EnsureRequirements(
     Some(leftKeysBuffer.toSeq, rightKeysBuffer.toSeq)
   }
 
+  /****
+   * 功能：尝试重排序 Join 键以匹配期望顺序
+   * • 构建表达式到位置的映射
+   * • 按期望顺序重新组织左右键
+   * • 返回 None 表示无法重排序
+   */
   private def reorderJoinKeys(
       leftKeys: Seq[Expression],
       rightKeys: Seq[Expression],
@@ -262,8 +308,10 @@ case class EnsureRequirements(
   }
 
   /**
-   * Recursively reorders the join keys based on partitioning. It starts reordering the
-   * join keys to match HashPartitioning on either side, followed by PartitioningCollection.
+   * 功能：Join 键重排序的公共入口
+   *    • 检查键的确定性
+   *    • 调用递归重排序方法
+   *    • 失败时返回原始键序列
    */
   private def reorderJoinKeysRecursively(
       leftKeys: Seq[Expression],
@@ -303,11 +351,10 @@ case class EnsureRequirements(
   }
 
   /**
-   * When the physical operators are created for JOIN, the ordering of join keys is based on order
-   * in which the join keys appear in the user query. That might not match with the output
-   * partitioning of the join node's children (thus leading to extra sort / shuffle being
-   * introduced). This rule will change the ordering of the join keys to match with the
-   * partitioning of the join nodes' children.
+   * 功能：专门处理 Join 操作符的键重排序
+   * • **ShuffledHashJoinExec**：重排序后创建新的 ShuffledHashJoin
+   * • **SortMergeJoinExec**：重排序后创建新的 SortMergeJoin
+   * • 其他操作符直接返回
    */
   private def reorderJoinPredicates(plan: SparkPlan): SparkPlan = {
     plan match {
@@ -328,11 +375,43 @@ case class EnsureRequirements(
     }
   }
 
+  /****
+   * 功能：规则的主入口，对整个物理计划树进行转换
+   * • 自底向上遍历计划树 (transformUp)
+   * • 优化冗余的重分区操作
+   * • 对每个操作符应用分布和排序要求
+   * • 处理顶层的 requiredDistribution 参数
+   *
+   * apply()
+   * ├── transformUp() 遍历每个节点
+   * │   ├── 冗余重分区检查
+   * │   └── reorderJoinPredicates()
+   * │       └── reorderJoinKeys()
+   * │           └── reorderJoinKeysRecursively()
+   * │               └── reorder()
+   * ├── ensureDistributionAndOrdering()
+   * │   ├── 插入 BroadcastExchange/ShuffleExchange
+   * │   ├── 协同分区优化
+   * │   │   └── checkKeyGroupedSpec()
+   * │   └── 插入 SortExec
+   * └── 处理顶层 requiredDistribution
+   */
   def apply(plan: SparkPlan): SparkPlan = {
+
+    // 自底向上遍历物理计划树，对每个节点应用转换规则
     val newPlan = plan.transformUp {
+
+      //////////////////////////////////////////////////////////////////////////////////////////////
+      // 冗余重分区优化分支- 如果ShuffleExchangeExec 子节点的分区形式跟父节点相同，则消除该 Exchange 节点 //
+      //////////////////////////////////////////////////////////////////////////////////////////////
+
       case operator @ ShuffleExchangeExec(upper: HashPartitioning, child, shuffleOrigin)
           if optimizeOutRepartition &&
+            // 当前分区策略是按照列 || 按照数量分区
+            // 检测由用户显式调用 repartition() 产生的 ShuffleExchange
             (shuffleOrigin == REPARTITION_BY_COL || shuffleOrigin == REPARTITION_BY_NUM) =>
+
+        // 检查子节点的分区是否与上层 ShuffleExchange 语义相等
         def hasSemanticEqualPartitioning(partitioning: Partitioning): Boolean = {
           partitioning match {
             case lower: HashPartitioning if upper.semanticEquals(lower) => true
@@ -341,33 +420,61 @@ case class EnsureRequirements(
             case _ => false
           }
         }
+
         if (hasSemanticEqualPartitioning(child.outputPartitioning)) {
-          child
+          child      // // 直接返回子节点，消除冗余 ShuffleExchange
         } else {
-          operator
+          operator    // 保留 ShuffleExchange
         }
 
+
+      //////////////////////////////////////////////////////////////
+      //                      通用操作符处理分支                    //
+      //////////////////////////////////////////////////////////////
       case operator: SparkPlan =>
+
+        // 重排序 Join 操作的键，优化分区匹配
+        //
+        // 重排序前 : leftKeys = [a, b], rightKeys = [b, a]
+        // 重排序后 : leftKeys = [a, b], rightKeys = [a, b]  // 避免额外 shuffle
         val reordered = reorderJoinPredicates(operator)
+
+        // 确保每个子节点满足当前操作符的分布和排序要求
+        // 原始子节点
+        // children = [TableScan(t1), TableScan(t2)]
+        // 插入必要的 Exchange 和 Sort
+        // newChildren = [
+        //    SortExec(sortOrder=[a ASC, b ASC],
+        //    ShuffleExchangeExec(HashPartitioning([a,b], 200), TableScan(t1))),
+        //    SortExec(sortOrder=[a ASC, b ASC],
+        //    ShuffleExchangeExec(HashPartitioning([a,b], 200), TableScan(t2)))
+        //  ]
         val newChildren = ensureDistributionAndOrdering(
           reordered.children,
           reordered.requiredChildDistribution,
           reordered.requiredChildOrdering,
           ENSURE_REQUIREMENTS)
+
         reordered.withNewChildren(newChildren)
     }
 
+    // 顶层分布要求处理
     if (requiredDistribution.isDefined) {
+
+      // 处理整个查询的顶层分布要求（通常用于测试或特殊场景）
       val shuffleOrigin = if (requiredDistribution.get.requiredNumPartitions.isDefined) {
-        REPARTITION_BY_NUM
+        REPARTITION_BY_NUM     // 按分区数重分区
       } else {
-        REPARTITION_BY_COL
+        REPARTITION_BY_COL     // 按列重分区
       }
+
+      // 重分区
       val finalPlan = ensureDistributionAndOrdering(
         newPlan :: Nil,
         requiredDistribution.get :: Nil,
         Seq(Nil),
         shuffleOrigin)
+
       assert(finalPlan.size == 1)
       finalPlan.head
     } else {

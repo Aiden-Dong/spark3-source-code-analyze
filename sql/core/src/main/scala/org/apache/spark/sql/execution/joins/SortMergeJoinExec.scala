@@ -1235,6 +1235,12 @@ case class SortMergeJoinExec(
     copy(left = newLeft, right = newRight)
 }
 
+
+
+
+
+
+
 /**
  * Helper class that is used to implement [[SortMergeJoinExec]].
  *

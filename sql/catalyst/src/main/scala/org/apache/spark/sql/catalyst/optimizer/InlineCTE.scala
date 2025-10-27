@@ -41,17 +41,24 @@ case class InlineCTE(alwaysInline: Boolean = false) extends Rule[LogicalPlan] {
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
     if (!plan.isInstanceOf[Subquery] && plan.containsPattern(CTE)) {
+
+      // 1. 构建 CTE 映射表，统计引用次数
       val cteMap = mutable.HashMap.empty[Long, (CTERelationDef, Int)]
       buildCTEMap(plan, cteMap)
+
+      //  2. 根据条件决定内联或保留
       val notInlined = mutable.ArrayBuffer.empty[CTERelationDef]
       val inlined = inlineCTE(plan, cteMap, notInlined)
-      // CTEs in SQL Commands have been inlined by `CTESubstitution` already, so it is safe to add
-      // WithCTE as top node here.
+
+
+      // 3. 未内联的 CTE 提升到顶层 WithCTE 节点
       if (notInlined.isEmpty) {
         inlined
       } else {
         WithCTE(inlined, notInlined.toSeq)
       }
+
+
     } else {
       plan
     }

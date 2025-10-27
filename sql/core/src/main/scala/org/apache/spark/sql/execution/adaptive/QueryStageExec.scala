@@ -156,7 +156,7 @@ abstract class QueryStageExec extends LeafExecNode {
  */
 case class ShuffleQueryStageExec(
     override val id: Int,
-    override val plan: SparkPlan,      // Exchage
+    override val plan: SparkPlan,      // ShuffleExchangeLike
     override val _canonicalized: SparkPlan) extends QueryStageExec {
 
   // ShuffleExchangeLike

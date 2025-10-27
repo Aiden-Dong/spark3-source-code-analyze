@@ -139,168 +139,120 @@ abstract class Optimizer(catalogManager: CatalogManager)
 
     val operatorOptimizationBatch: Seq[Batch] = {
 
-      // 谓词推断前的运算符优化
-      Batch("Operator Optimization before Inferring Filters", fixedPoint,
+      Batch("Operator Optimization before Inferring Filters",
+        // 谓词推断前的运算符优化
+        fixedPoint,
         operatorOptimizationRuleSet: _*) ::
-
-      // 谓词推导
-      Batch("Infer Filters", Once,
+      Batch("Infer Filters",
+        // 谓词推导
+        Once,
         InferFiltersFromGenerate,
         InferFiltersFromConstraints) ::
-
-      // 谓词推断前的运算符优化
-      Batch("Operator Optimization after Inferring Filters", fixedPoint,
+      Batch("Operator Optimization after Inferring Filters",
+        // 谓词推断前的运算符优化
+        fixedPoint,
         operatorOptimizationRuleSet: _*) ::
-
-      // 通过连接下推附加谓词
-      // 策略设为Once（单次执行），因连接条件不变，无需每次重复下推过滤条件
-      Batch("Push extra predicate through join", fixedPoint,
+      Batch("Push extra predicate through join",
+        // 通过连接下推附加谓词
+        // 策略设为Once（单次执行），因连接条件不变，无需每次重复下推过滤条件
+        fixedPoint,
         PushExtraPredicateThroughJoin,
         PushDownPredicates) :: Nil
     }
 
     val batches = (Batch("Eliminate Distinct", Once, EliminateDistinct) ::
-
-    // 逻辑树最终解释处理
-    Batch("Finish Analysis", Once,
-         FinishAnalysis) ::
-
-    //////////////////////////////////////////////////////////////////////////////////////////
-    // 优化器规则从这里开始
-    //////////////////////////////////////////////////////////////////////////////////////////
-    // - 在主要优化规则执行前，先进行第一次CombineUnions调用，
-    // 因为这可以减少迭代次数，且其他规则可能会在两个相邻的Union操作符之间添加/移动额外的操作符。
-    // - 在"Operator Optimizations"批处理中再次调用CombineUnions，
-    // 因为其他规则可能会使两个独立的Union操作符变为相邻状态。
-    Batch("Inline CTE", Once,
-         InlineCTE()) ::       // 将CTE定义内联到对应的引用中
-
-    // UNION 算子操作
-    Batch("Union", Once,
-        RemoveNoopOperators,   // 移除无操作算子
-        CombineUnions,         // 将所有相邻的[[Union]]运算符合并为一个[[Union]]。
-        RemoveNoopUnion) ::    // 从 Union 子节点中移除无效的 Union 操作
-
-    // limit 0 算子置空
-    Batch("OptimizeLimitZero", Once,
+      Batch("Finish Analysis", Once, FinishAnalysis) ::
+      //////////////////////////////////////////////////////////////////////////////////////////
+      // Optimizer rules start here
+      //////////////////////////////////////////////////////////////////////////////////////////
+      // - Do the first call of CombineUnions before starting the major Optimizer rules,
+      //   since it can reduce the number of iteration and the other rules could add/move
+      //   extra operators between two adjacent Union operators.
+      // - Call CombineUnions again in Batch("Operator Optimizations"),
+      //   since the other rules might make two separate Unions operators adjacent.
+      Batch("Inline CTE", Once,
+        InlineCTE()) ::
+      Batch("Union", Once,
+        RemoveNoopOperators,
+        CombineUnions,
+        RemoveNoopUnion) ::
+      Batch("OptimizeLimitZero", Once,
         OptimizeLimitZero) ::
-
-    // 提前执行此优化步骤。这可能会简化执行计划并降低优化器开销。
-    // 例如，类似 Filter(LocalRelation) 的查询会触发所有与过滤条件相关的
-    // 重量级优化规则（如InferFiltersFromConstraints）。若我们提前执行此批次优化，
-    // 查询将被简化为LocalRelation，从而避免触发众多优化规则。
-    Batch("LocalRelation early", fixedPoint,
+      // Run this once earlier. This might simplify the plan and reduce cost of optimizer.
+      // For example, a query such as Filter(LocalRelation) would go through all the heavy
+      // optimizer rules that are triggered when there is a filter
+      // (e.g. InferFiltersFromConstraints). If we run this batch earlier, the query becomes just
+      // LocalRelation and does not trigger many rules.
+      Batch("LocalRelation early", fixedPoint,
         ConvertToLocalRelation,
         PropagateEmptyRelation,
-        // 当删除 Union 的空关系子节点时，PropagateEmptyRelation 可以将属性的可空性从可空更改为非可空
+        // PropagateEmptyRelation can change the nullability of an attribute from nullable to
+        // non-nullable when an empty relation child of a Union is removed
         UpdateAttributeNullability) ::
-
-    // 拉取相关表达式
-    Batch("Pullup Correlated Expressions", Once,
+      Batch("Pullup Correlated Expressions", Once,
         OptimizeOneRowRelationSubquery,
         PullupCorrelatedPredicates) ::
-
-    // 子查询批处理会递归应用优化规则，因此强制要求其幂等性没有意义，
-    // 我们将该批处理从Once更改为FixedPoint(1)。
-    Batch("Subquery", FixedPoint(1), OptimizeSubqueries) ::
-
-    Batch("Replace Operators", fixedPoint,
-        RewriteExceptAll,                        // 使用Union、Aggregate和Generate操作符的组合来替换逻辑上的[[Except]]运算符
-        RewriteIntersectAll,                     // 使用Union、Aggregate和Generate操作符的组合来替代逻辑上的[[Intersect]]运算符
-        ReplaceIntersectWithSemiJoin,            // 将逻辑上的 [[Intersect]] 操作符替换为左半 [[Join]]（Left Semi Join）操作符。
-        ReplaceExceptWithFilter,                 // 如果逻辑 [[Except]] 操作符中的一个或两个数据集仅通过 [[Filter]] 进行了转换，
-                                                 // 则此规则会将 [[Except]] 操作符替换为 [[Filter]] 操作符.
-        ReplaceExceptWithAntiJoin,               // 将逻辑 [[Except]] 操作符替换为左反连接（left-anti [[Join]]）操作符。
-        ReplaceDistinctWithAggregate,            // 将 [[Distinct]] 算子替换为 [[Aggregate]] 算子
-        ReplaceDeduplicateWithAggregate          // 将逻辑上的 [[Deduplicate]] 操作符替换为 [[Aggregate]] 操作符。
-    ) ::
-
-    // [[Aggregate]] 算子处理
-    Batch("Aggregate", fixedPoint,
-        RemoveLiteralFromGroupExpressions,               // 从[[Aggregate]]的分组表达式中移除字面量，因为它们对结果没有影响，
-        RemoveRepetitionFromGroupExpressions) :: Nil ++  // 从[[Aggregate]]的分组表达式中移除重复项，因为它们对结果没有影响，
-        operatorOptimizationBatch                        // 谓词推导
-    ) :+
-
-    Batch("Clean Up Temporary CTE Info", Once,
-        CleanUpTempCTEInfo                           // 清理 [[CTERelationDef]] 节点中的临时信息。
-    ) :+
-
-    // 此批处理在算子优化之后、任何依赖于统计信息的批处理之前重写计划
-    Batch("Pre CBO Rules", Once,
-        preCBORules: _*
-    ) :+
-
-    // 此批处理将过滤器和投影下推到扫描节点。在此批处理之前，
-    // 逻辑计划可能包含不报告统计信息的节点。任何依赖统计信息的操作必须在此批处理之后运行。
-    Batch("Early Filter and Projection Push-Down", Once,
-        earlyScanPushDownRules: _*
-    ) :+
-
-    Batch("Update CTE Relation Stats", Once,
-        UpdateCTERelationStats                   // 更新CTE 引用状态
-    ) :+
-
-    // 由于AQP中的JOIN成本可能在多次运行之间发生变化，我们没有理由要求此批处理具备幂等性。
-    // 因此这里使用FixedPoint(1)而非Once。
-    Batch("Join Reorder", FixedPoint(1),
-        CostBasedJoinReorder
-    ) :+
-
-    Batch("Eliminate Sorts", Once,
-       EliminateSorts
-    ) :+
-
-    Batch("Decimal Optimizations", fixedPoint,
-        DecimalAggregates                // 通过在未缩放的Long值上执行计算，加速对Decimal的聚合操作。
-    ) :+
-
-    // 此批处理必须在"Decimal 优化"之后运行，因为该优化可能会修改聚合去重列
-    Batch("Distinct Aggregate Rewrite", Once,
-        RewriteDistinctAggregates      // 优化带有 [[Aggregate]] 的 [[Distinct]] 操作
-    ) :+
-
-    Batch("Object Expressions Optimization", fixedPoint,
-        EliminateMapObjects,           // 移除MapObject
-        CombineTypedFilters,           // 将两个相邻的 [[TypedFilter]] 合并为一个
-        ObjectSerializerPruning,       // 从查询计划中移除不必要的对象序列化器
-        ReassignLambdaVariableID       // 为LambdaVariable重新分配基于查询的唯一ID，其原始ID是全局唯一的。
-    ) :+
-
-    Batch("LocalRelation", fixedPoint,
+      // Subquery batch applies the optimizer rules recursively. Therefore, it makes no sense
+      // to enforce idempotence on it and we change this batch from Once to FixedPoint(1).
+      Batch("Subquery", FixedPoint(1),
+        OptimizeSubqueries) ::
+      Batch("Replace Operators", fixedPoint,
+        RewriteExceptAll,
+        RewriteIntersectAll,
+        ReplaceIntersectWithSemiJoin,
+        ReplaceExceptWithFilter,
+        ReplaceExceptWithAntiJoin,
+        ReplaceDistinctWithAggregate,
+        ReplaceDeduplicateWithAggregate) ::
+      Batch("Aggregate", fixedPoint,
+        RemoveLiteralFromGroupExpressions,
+        RemoveRepetitionFromGroupExpressions) :: Nil ++
+      operatorOptimizationBatch) :+
+      Batch("Clean Up Temporary CTE Info", Once, CleanUpTempCTEInfo) :+
+      // This batch rewrites plans after the operator optimization and
+      // before any batches that depend on stats.
+      Batch("Pre CBO Rules", Once, preCBORules: _*) :+
+      // This batch pushes filters and projections into scan nodes. Before this batch, the logical
+      // plan may contain nodes that do not report stats. Anything that uses stats must run after
+      // this batch.
+      Batch("Early Filter and Projection Push-Down", Once, earlyScanPushDownRules: _*) :+
+      Batch("Update CTE Relation Stats", Once, UpdateCTERelationStats) :+
+      // Since join costs in AQP can change between multiple runs, there is no reason that we have an
+      // idempotence enforcement on this batch. We thus make it FixedPoint(1) instead of Once.
+      Batch("Join Reorder", FixedPoint(1),
+        CostBasedJoinReorder) :+
+      Batch("Eliminate Sorts", Once,
+        EliminateSorts) :+
+      Batch("Decimal Optimizations", fixedPoint,
+        DecimalAggregates) :+
+      // This batch must run after "Decimal Optimizations", as that one may change the
+      // aggregate distinct column
+      Batch("Distinct Aggregate Rewrite", Once,
+        RewriteDistinctAggregates) :+
+      Batch("Object Expressions Optimization", fixedPoint,
+        EliminateMapObjects,
+        CombineTypedFilters,
+        ObjectSerializerPruning,
+        ReassignLambdaVariableID) :+
+      Batch("LocalRelation", fixedPoint,
         ConvertToLocalRelation,
         PropagateEmptyRelation,
-        // 当Union操作的空关系子节点被移除时
-      // PropagateEmptyRelation可能会将属性的可空性从nullable改为non-nullable
-        UpdateAttributeNullability
-    ) :+
-
-    Batch("Optimize One Row Plan", fixedPoint,
-      OptimizeOneRowPlan     // 基于行数优化执行计划
-    ) :+
-
-    // 该批处理应在"Join重排"和"LocalRelation"批处理之后执行。
-    Batch("Check Cartesian Products", Once,
-      CheckCartesianProducts        // 检查优化后的计划树中是否存在任意类型连接之间的笛卡尔积
-    ) :+
-
-    // 重写子查询
-    Batch("RewriteSubquery", Once,
-      RewritePredicateSubquery,         // 本规则将谓词子查询重写为左半连接(left semi)/反连接(anti join)
-      ColumnPruning,                    // 列裁剪
-      CollapseProject,                  // [[project]] 合并
-      RemoveRedundantAliases,           // 从查询计划中移除冗余的别名
-      RemoveNoopOperators               // 从查询计划中移除不进行任何修改的无操作算子
-    ) :+
-
-    // This batch must be executed after the `RewriteSubquery` batch, which creates joins.
-    Batch("NormalizeFloatingNumbers", Once,
-      NormalizeFloatingNumbers          // 浮点类型处理
-    ) :+
-
-    Batch("ReplaceUpdateFieldsExpression", Once,
-      ReplaceUpdateFieldsExpression     // 将 [[UpdateFields]] 表达式替换为可求值的表达式。
-    )
+        // PropagateEmptyRelation can change the nullability of an attribute from nullable to
+        // non-nullable when an empty relation child of a Union is removed
+        UpdateAttributeNullability) :+
+      Batch("Optimize One Row Plan", fixedPoint, OptimizeOneRowPlan) :+
+      // The following batch should be executed after batch "Join Reorder" and "LocalRelation".
+      Batch("Check Cartesian Products", Once,
+        CheckCartesianProducts) :+
+      Batch("RewriteSubquery", Once,
+        RewritePredicateSubquery,
+        ColumnPruning,
+        CollapseProject,
+        RemoveRedundantAliases,
+        RemoveNoopOperators) :+
+      // This batch must be executed after the `RewriteSubquery` batch, which creates joins.
+      Batch("NormalizeFloatingNumbers", Once, NormalizeFloatingNumbers) :+
+      Batch("ReplaceUpdateFieldsExpression", Once, ReplaceUpdateFieldsExpression)
 
     // remove any batches with no rules. this may happen when subclasses do not add optional rules.
     batches.filter(_.rules.nonEmpty)

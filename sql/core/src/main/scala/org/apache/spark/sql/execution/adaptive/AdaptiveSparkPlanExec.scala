@@ -112,6 +112,16 @@ case class AdaptiveSparkPlanExec(
 
   ////// 核心优化规则 ////////////////////
 
+  // `EnsureRequirements` 可能会移除用户指定的重新分区，并假设查询计划不会更改其输出分区。
+  // 但在 AQE 中，这一假设并不成立。这里我们检查尚未被 `EnsureRequirements` 处理的 `inputPlan`，
+  // 以找出有效的用户指定的重新分区。稍后，AQE 框架将确保最终输出分区不会相对于有效的用户指定重新分区发生变化。
+  @transient private val requiredDistribution: Option[Distribution] = if (isSubquery) {
+    // Subquery output does not need a specific output partitioning.
+    Some(UnspecifiedDistribution)
+  } else {
+    AQEUtils.getRequiredDistribution(inputPlan)
+  }
+  
   // 查询阶段准备规则
   @transient private val queryStagePreparationRules: Seq[Rule[SparkPlan]] = {
     // 对于像 `df.repartition(a, b).select(c)` 这样的情况，最终计划没有分区要求，但我们确实需要尊重用户指定的重新分区。
@@ -154,15 +164,6 @@ case class AdaptiveSparkPlanExec(
 
 
 
-  // `EnsureRequirements` 可能会移除用户指定的重新分区，并假设查询计划不会更改其输出分区。
-  // 但在 AQE 中，这一假设并不成立。这里我们检查尚未被 `EnsureRequirements` 处理的 `inputPlan`，
-  // 以找出有效的用户指定的重新分区。稍后，AQE 框架将确保最终输出分区不会相对于有效的用户指定重新分区发生变化。
-  @transient private val requiredDistribution: Option[Distribution] = if (isSubquery) {
-    // Subquery output does not need a specific output partitioning.
-    Some(UnspecifiedDistribution)
-  } else {
-    AQEUtils.getRequiredDistribution(inputPlan)
-  }
 
   // This rule is stateful as it maintains the codegen stage ID. We can't create a fresh one every
   // time and need to keep it in a variable.
@@ -213,8 +214,12 @@ case class AdaptiveSparkPlanExec(
    * @param newStages 新创建的查询阶段列表.
    */
   private case class CreateStageResult(
+    // 如果没有 exchange 操作，  newPlan=oldPlan
+    // 如果发生 exchage 操作, 则改 exchage 被替换为 QueryStageExec 操作(仅当所有子节点被物化)
     newPlan: SparkPlan,
+    // 判断是否所有子节点都被物化
     allChildStagesMaterialized: Boolean,
+    // 有没有新产生的 QueryStageExec 节点(需要被物化)
     newStages: Seq[QueryStageExec])
 
   def executedPlan: SparkPlan = currentPhysicalPlan
@@ -239,7 +244,7 @@ case class AdaptiveSparkPlanExec(
 
   private def getFinalPhysicalPlan(): SparkPlan = lock.synchronized {
 
-    // 如果已经是最终计划，直接返回
+    // 判断是都是最终计划 -- ?????
     if (isFinalPlan) return currentPhysicalPlan
 
     // 如果自适应计划在 `withActive` 范围函数之外执行，例如 `plan.queryExecution.rdd`，
@@ -251,6 +256,8 @@ case class AdaptiveSparkPlanExec(
       // during `initialPlan`
       var currentLogicalPlan = inputPlan.logicalLink.get
 
+      //  TODO - 1 : 搜索逻辑树中是否有 Exchange 节点
+      //             如果存在 Exchange 节点则创建对应的 QueryStageExec
       var result = createQueryStages(currentPhysicalPlan)    // 创建查询阶段
 
       val events = new LinkedBlockingQueue[StageMaterializationEvent]()  // 阶段物化事件队列（成功/失败）
@@ -259,9 +266,16 @@ case class AdaptiveSparkPlanExec(
 
       // 表示如果新的节点还没有开启物化
       while (!result.allChildStagesMaterialized) {
+
+        // 拿到优化以后的新的 逻辑树
         currentPhysicalPlan = result.newPlan
+
+        //  TODO - 2 : 表示有新的需要物化的结果树 - 要对所有需要物化的结果树进行物化处理
         if (result.newStages.nonEmpty) {
+
           stagesToReplace = result.newStages ++ stagesToReplace
+
+          // 通知 Listener 物理计划被改变
           executionId.foreach(onUpdatePlan(_, result.newStages.map(_.plan)))
 
           // SPARK-33933: 优先提交广播阶段，避免广播超时
@@ -305,32 +319,31 @@ case class AdaptiveSparkPlanExec(
           cleanUpAndThrowException(errors.toSeq, None)
         }
 
-        // 当重新优化和重新规划时：
-        //
-        // 成本比较原则：
-        // 若新计划的成本≤当前计划成本 → 采用新计划
-        // 若新计划成本更高 → 保留当前物理计划及对应的逻辑计划（因物理计划中的逻辑链接指向其衍生来源的逻辑计划）
-        // 语义间隙处理机制：
-        // 维护自上次计划更新后创建的查询阶段列表，该列表表征当前逻辑计划与物理计划间的"语义间隙"
-        // 每次重新规划前，将当前逻辑计划中的相应节点替换为逻辑查询阶段，确保与当前物理计划语义同步
-        // 当新计划被采用且逻辑/物理计划均更新后，清空查询阶段列表（此时两个计划在语义和物理层面重新达成同步）
 
-        // 1. 用LogicalQueryStage替换已完成的阶段
+        // TODO - 3  : 重优化处理
+
+        // 因为物理树发生了变更， 所以需要将当前的逻辑树做修改
         val logicalPlan = replaceWithQueryStagesInLogicalPlan(currentLogicalPlan, stagesToReplace)
         // 2. 基于更新后的逻辑计划重新优化
         val afterReOptimize = reOptimize(logicalPlan)
 
-        // 3. 如果优化后的计划更好，则采用新计划
+        // TODO - 4 基于成本比较器 : 挑选最优的计划树
+
         if (afterReOptimize.isDefined) {
+          // 拿到优化后的逻辑计划树跟物理计划树
           val (newPhysicalPlan, newLogicalPlan) = afterReOptimize.get
-          val origCost = costEvaluator.evaluateCost(currentPhysicalPlan)
-          val newCost = costEvaluator.evaluateCost(newPhysicalPlan)
+
+
+          val origCost = costEvaluator.evaluateCost(currentPhysicalPlan)    // 计算当前的物理计划损失
+          val newCost = costEvaluator.evaluateCost(newPhysicalPlan)         // 计算新的物理计划损失
+
           if (newCost < origCost ||
             (newCost == origCost && currentPhysicalPlan != newPhysicalPlan)) {
+
             logOnLevel(s"Plan changed from $currentPhysicalPlan to $newPhysicalPlan")
             cleanUpTempTags(newPhysicalPlan)
             currentPhysicalPlan = newPhysicalPlan
-            currentLogicalPlan = newLogicalPlan
+            currentLogicalPlan = newLogicalPlan          // 当前的逻辑计划树
             stagesToReplace = Seq.empty[QueryStageExec]
           }
         }
@@ -588,10 +601,10 @@ case class AdaptiveSparkPlanExec(
    */
   private def createQueryStages(plan: SparkPlan): CreateStageResult = plan match {
 
-    // Exchange 节点处理 - 核心逻辑
+
     case e: Exchange =>
       // First have a quick check in the `stageCache` without having to traverse down the node.
-      context.stageCache.get(e.canonicalized) match {
+      context.stageCache.get(e.canonicalized) match {   //  当前 exchanger 已经存在
         case Some(existingStage) if conf.exchangeReuseEnabled =>
           // // 找到可重用的阶段, 复用重用的阶段，
           val stage = reuseQueryStage(existingStage, e)
@@ -609,6 +622,8 @@ case class AdaptiveSparkPlanExec(
           val newPlan = e.withNewChildren(Seq(result.newPlan)).asInstanceOf[Exchange]  // 生成新的执行节点
 
 
+
+          // 所有子节点都被物化以后才创建
           if (result.allChildStagesMaterialized) {    // 所有子阶段都已物化，可以创建新的查询阶段
 
             // 在创建时并且进行优化
@@ -738,12 +753,18 @@ case class AdaptiveSparkPlanExec(
   private def replaceWithQueryStagesInLogicalPlan(
       plan: LogicalPlan,
       stagesToReplace: Seq[QueryStageExec]): LogicalPlan = {
+
     var logicalPlan = plan
+
     stagesToReplace.foreach {
       case stage if currentPhysicalPlan.exists(_.eq(stage)) =>
+
         val logicalNodeOpt = stage.getTagValue(TEMP_LOGICAL_PLAN_TAG).orElse(stage.logicalLink)
+
         assert(logicalNodeOpt.isDefined)
+
         val logicalNode = logicalNodeOpt.get
+
         val physicalNode = currentPhysicalPlan.collectFirst {
           case p if p.eq(stage) ||
             p.getTagValue(TEMP_LOGICAL_PLAN_TAG).exists(logicalNode.eq) ||
@@ -767,25 +788,27 @@ case class AdaptiveSparkPlanExec(
   }
 
   /**
-   * Re-optimize and run physical planning on the current logical plan based on the latest stats.
+   * 重新优化这个逻辑计划树，跟对应的物理计划树
    */
   private def reOptimize(logicalPlan: LogicalPlan): Option[(SparkPlan, LogicalPlan)] = {
     try {
-      logicalPlan.invalidateStatsCache()
-      val optimized = optimizer.execute(logicalPlan)
-      val sparkPlan = context.session.sessionState.planner.plan(ReturnAnswer(optimized)).next()
-      val newPlan = applyPhysicalRules(
-        sparkPlan,
-        preprocessingRules ++ queryStagePreparationRules,
-        Some((planChangeLogger, "AQE Replanning")))
 
-      // When both enabling AQE and DPP, `PlanAdaptiveDynamicPruningFilters` rule will
-      // add the `BroadcastExchangeExec` node manually in the DPP subquery,
-      // not through `EnsureRequirements` rule. Therefore, when the DPP subquery is complicated
-      // and need to be re-optimized, AQE also need to manually insert the `BroadcastExchangeExec`
-      // node to prevent the loss of the `BroadcastExchangeExec` node in DPP subquery.
-      // Here, we also need to avoid to insert the `BroadcastExchangeExec` node when the newPlan is
-      // already the `BroadcastExchangeExec` plan after apply the `LogicalQueryStageStrategy` rule.
+      logicalPlan.invalidateStatsCache()  // 当前逻辑计划树的指标失效
+
+
+      val optimized = optimizer.execute(logicalPlan)  // 使用AQE 优化器重新优化该算子
+
+      // 生成物理计划
+      val sparkPlan = context.session.sessionState.planner.plan(ReturnAnswer(optimized)).next()
+
+      // 优化物理计划
+      val newPlan = applyPhysicalRules(sparkPlan, preprocessingRules ++ queryStagePreparationRules, Some((planChangeLogger, "AQE Replanning")))
+
+
+      // 当同时启用AQE（自适应查询执行）和DPP（动态分区裁剪）时，PlanAdaptiveDynamicPruningFilters规则会手动在DPP子查询中添加BroadcastExchangeExec节点，
+      // 而不是通过EnsureRequirements规则。
+      // 因此，当DPP子查询较为复杂且需要重新优化时，AQE也需要手动插入BroadcastExchangeExec节点，以防止DPP子查询中的BroadcastExchangeExec节点丢失。
+      // 此外，在应用LogicalQueryStageStrategy规则后，如果新计划已经是BroadcastExchangeExec计划，我们也需要避免重复插入该节点。
       val finalPlan = inputPlan match {
         case b: BroadcastExchangeLike
           if (!newPlan.isInstanceOf[BroadcastExchangeLike]) => b.withNewChildren(Seq(newPlan))
@@ -820,7 +843,7 @@ case class AdaptiveSparkPlanExec(
   }
 
   /**
-   * Notify the listeners of the physical plan change.
+   * 通知 Listener 物理计划被改变
    */
   private def onUpdatePlan(executionId: Long, newSubPlans: Seq[SparkPlan]): Unit = {
     if (isSubquery) {

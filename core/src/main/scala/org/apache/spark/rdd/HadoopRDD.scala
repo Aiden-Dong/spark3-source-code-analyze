@@ -24,7 +24,7 @@ import java.util.{Date, Locale}
 import scala.collection.immutable.Map
 import scala.reflect.ClassTag
 import org.apache.hadoop.conf.{Configurable, Configuration}
-import org.apache.hadoop.fs.{FileSystem, Path}
+
 import org.apache.hadoop.io.compress.CompressionCodecFactory
 import org.apache.hadoop.mapred._
 import org.apache.hadoop.mapred.lib.CombineFileSplit
