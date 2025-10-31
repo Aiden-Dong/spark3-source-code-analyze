@@ -69,10 +69,10 @@ final class PackedRecordPointer {
 
   /**
    * Pack a record address and partition id into a single word.
-   *
+   *  )
    * @param recordPointer a record pointer encoded by TaskMemoryManager.
    * @param partitionId a shuffle partition id (maximum value of 2^24).
-   * @return a packed pointer that can be decoded using the {@link PackedRecordPointer} class.
+   * @return a packed pointer that can be decoded using the {@link PackedRecordPointer} class. (3个字节-分区号) | (5个字节数据位置编码[块号+块内偏移])
    */
   public static long packPointer(long recordPointer, int partitionId) {
     assert (partitionId <= MAXIMUM_PARTITION_ID);

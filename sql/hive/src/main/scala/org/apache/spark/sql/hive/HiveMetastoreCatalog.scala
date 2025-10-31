@@ -190,14 +190,16 @@ private[hive] class HiveMetastoreCatalog(sparkSession: SparkSession) extends Log
       fileFormatClass: Class[_ <: FileFormat],
       fileType: String,
       isWrite: Boolean): LogicalRelation = {
-    val metastoreSchema = relation.tableMeta.schema
-    val tableIdentifier =
-      QualifiedTableName(relation.tableMeta.database, relation.tableMeta.identifier.table)
 
+    // =============================== 从hive 表中获取元信息 ===========================
+
+    val metastoreSchema = relation.tableMeta.schema                                                            // schema
+    val tableIdentifier = QualifiedTableName(relation.tableMeta.database, relation.tableMeta.identifier.table)  // identifier
     val lazyPruningEnabled = sparkSession.sqlContext.conf.manageFilesourcePartitions
-    val tablePath = new Path(relation.tableMeta.location)
-    val fileFormat = fileFormatClass.getConstructor().newInstance()
-    val bucketSpec = relation.tableMeta.bucketSpec
+    val tablePath = new Path(relation.tableMeta.location)                                                       // 表路径信息
+    val fileFormat = fileFormatClass.getConstructor().newInstance()                                             // 表格式
+    val bucketSpec = relation.tableMeta.bucketSpec                                                              // 表bucket 信息
+
     val (hiveOptions, hiveBucketSpec) =
       if (isWrite) {
         (options.updated(BucketingUtils.optionForHiveCompatibleBucketWrite, "true"),

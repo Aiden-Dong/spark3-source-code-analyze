@@ -25,7 +25,7 @@ import org.apache.spark.sql.types.{StructField, StructType}
 
 
 /**
- *充当从数据源读取所需的所有元数据的容器。
+ * 充当从数据源读取所需的所有元数据的容器。
  * 所有关于模式和分区的发现、解析和合并逻辑都已移除。
  *
  * @param location 一个 [[FileIndex]]，它可以列举出组成这个关系的所有文件的位置。  [[CatalogFileIndex]]

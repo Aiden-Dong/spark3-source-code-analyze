@@ -26,6 +26,19 @@ import org.apache.spark.unsafe.memory.MemoryBlock;
 import org.apache.spark.util.collection.Sorter;
 import org.apache.spark.util.collection.unsafe.sort.RadixSort;
 
+/****
+ * 在内存中对 Shuffle 数据进行排序，按分区 ID 对记录指针进行排序
+ * 具体功能包括：
+ *    1. 存储记录指针：维护一个 LongArray 数组，存储经过 PackedRecordPointer 编码的记录指针和分区 ID
+ *    2. 内存管理：
+ *        a. 预留部分空间用于排序操作（基数排序预留一半，普通排序预留1/3）
+ *        b. 支持动态扩容和内存释放
+ *    3. 排序算法：
+ *        a. 支持基数排序（RadixSort）- 速度更快但需要更多内存
+ *        b. 支持比较排序 - 内存占用较少
+ *    4. 按分区排序：通过 SortComparator 按分区 ID 进行排序，这是 Shuffle 操作的关键 - 相同分区的数据会被聚集在一起
+ *    5. 提供迭代器：排序完成后提供 ShuffleSorterIterator 按排序顺序访问记录
+ */
 final class ShuffleInMemorySorter {
 
   private static final class SortComparator implements Comparator<PackedRecordPointer> {
@@ -175,10 +188,13 @@ final class ShuffleInMemorySorter {
   public ShuffleSorterIterator getSortedIterator() {
     int offset = 0;
     if (useRadixSort) {
+
+      // 只对分区部分开始排序
       offset = RadixSort.sort(
         array, pos,
         PackedRecordPointer.PARTITION_ID_START_BYTE_INDEX,
         PackedRecordPointer.PARTITION_ID_END_BYTE_INDEX, false, false);
+
     } else {
       MemoryBlock unused = new MemoryBlock(
         array.getBaseObject(),

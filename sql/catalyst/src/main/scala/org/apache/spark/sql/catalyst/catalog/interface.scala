@@ -832,6 +832,7 @@ case class HiveTableRelation(
     tableStats = None
   )
 
+  // 指标信息主要来自于 tableMeta
   override def computeStats(): Statistics = {
     tableMeta.stats.map(_.toPlanStats(output, conf.cboEnabled || conf.planStatsEnabled))
       .orElse(tableStats)
