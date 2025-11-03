@@ -37,21 +37,102 @@ package org.apache.spark.util.collection;
 
 import java.util.Comparator;
 
-/**
- * A port of the Android TimSort class, which utilizes a "stable, adaptive, iterative mergesort."
- * See the method comment on sort() for more details.
+/******************************************************
  *
- * This has been kept in Java with the original style in order to match very closely with the
- * Android source code, and thus be easy to verify correctness. The class is package private. We put
- * a simple Scala wrapper {@link org.apache.spark.util.collection.Sorter}, which is available to
- * package org.apache.spark.
+ * TimSort 排序过程演示
+ * ===================
  *
- * The purpose of the port is to generalize the interface to the sort to accept input data formats
- * besides simple arrays where every element is sorted individually. For instance, the AppendOnlyMap
- * uses this to sort an Array with alternating elements of the form [key, value, key, value].
- * This generalization comes with minimal overhead -- see SortDataFormat for more information.
+ * 初始数组: [5, 2, 4, 6, 1, 3, 8, 7, 9]
  *
- * We allow key reuse to prevent creating many key objects -- see SortDataFormat.
+ * 步骤 1: 识别自然有序序列 (runs)
+ * ┌─────────────────────────────────────┐
+ * │ [5] [2,4,6] [1,3] [8] [7,9]         │
+ * │  ↑    ↑      ↑    ↑    ↑            │
+ * │ run1  run2   run3 run4 run5         │
+ * └─────────────────────────────────────┘
+ *
+ * 步骤 2: 扩展短序列到最小长度 (minRun=4)
+ * ┌─────────────────────────────────────┐
+ * │ [2,4,5,6] [1,3,8,9] [7]             │
+ * │    ↑         ↑      ↑               │
+ * │  扩展后    合并后   剩余               │
+ * └─────────────────────────────────────┘
+ *
+ * 步骤 3: 使用栈维护合并不变式
+ * 栈状态变化:
+ * ┌──────┐    ┌──────┐    ┌──────┐
+ * │ [7]  │    │ [7]  │    │      │
+ * ├──────┤ -> ├──────┤ -> ├──────┤
+ * │[1,3, │    │[1,2, │    │[1,2, │
+ * │8,9]  │    │3,4,5,│    │3,4,5,│
+ * ├──────┤    │6,8,9]│    │6,7,8,│
+ * │[2,4, │    │      │    │9]    │
+ * │5,6]  │    │      │    │      │
+ * └──────┘    └──────┘    └──────┘
+ *
+ * 最终结果: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+ *
+ * TimSort 关键特性:
+ * • 识别已有序序列，减少不必要的比较
+ * • 对部分有序数据性能优异
+ * • 稳定排序，相等元素顺序不变
+ * • 自适应算法，根据数据特征调整策略
+ *
+ * 详细合并过程演示
+ * ===============
+ *
+ * 假设有两个已排序的 runs 需要合并:
+ * Run A: [1, 3, 5, 7]
+ * Run B: [2, 4, 6, 8]
+ *
+ * 合并过程 (Galloping Mode):
+ * ┌─────────────────────────────────────┐
+ * │ Step 1: 比较 1 vs 2                  │
+ * │ [1] 3 5 7    2 4 6 8                │
+ * │  ↑           ↑                      │
+ * │ 选择1        当前                    │
+ * │ 结果: [1]                           │
+ * └─────────────────────────────────────┘
+ *
+ * ┌─────────────────────────────────────┐
+ * │ Step 2: 比较 3 vs 2                  │
+ * │ 1 [3] 5 7    [2] 4 6 8              │
+ * │    ↑          ↑                     │
+ * │   当前        选择2                  │
+ * │ 结果: [1, 2]                         │
+ * └─────────────────────────────────────┘
+ *
+ * ┌─────────────────────────────────────┐
+ * │ Step 3: 比较 3 vs 4                │
+ * │ 1 [3] 5 7    2 [4] 6 8             │
+ * │    ↑            ↑                  │
+ * │   选择3         当前                │
+ * │ 结果: [1, 2, 3]                    │
+ * └─────────────────────────────────────┘
+ *
+ * 继续此过程...
+ * 最终结果: [1, 2, 3, 4, 5, 6, 7, 8]
+ *
+ * TimSort 优化策略:
+ * ┌─────────────────────────────────────┐
+ * │ • Binary Insertion Sort (小数组)     │
+ * │ • Run Detection (识别有序序列)        │
+ * │ • Galloping Mode (连续选择优化)       │
+ * │ • Merge Stack (维护合并不变式)        │
+ * └─────────────────────────────────────┘
+ *
+ * Android TimSort 类的移植版本，采用"稳定的、自适应的、迭代式归并排序"。
+ * 更多详细信息请参见 sort() 方法的注释。
+ *
+ * 这个类保持了 Java 和原始风格，以便与 Android 源代码非常接近匹配， 从而易于验证正确性。
+ * 该类是包私有的。我们提供了一个简单的 Scala 包装器
+ * {@link org.apache.spark.util.collection.Sorter}，可供 org.apache.spark 包使用。
+ *
+ * 移植的目的是泛化排序接口，以接受除简单数组（每个元素单独排序）之外的输入数据格式。
+ * 例如，AppendOnlyMap 使用它来排序具有 [key, value, key, value] 形式交替元素的数组。
+ * 这种泛化带来的开销很小 -- 更多信息请参见 SortDataFormat。
+ *
+ * 我们允许键重用以防止创建许多键对象 -- 请参见 SortDataFormat。
  *
  * @see org.apache.spark.util.collection.SortDataFormat
  * @see org.apache.spark.util.collection.Sorter
@@ -59,21 +140,16 @@ import java.util.Comparator;
 class TimSort<K, Buffer> {
 
   /**
-   * This is the minimum sized sequence that will be merged.  Shorter
-   * sequences will be lengthened by calling binarySort.  If the entire
-   * array is less than this length, no merges will be performed.
+   * 这是将被合并的最小序列长度。较短的序列将通过调用 binarySort 来延长。
+   * 如果整个数组小于此长度，则不会执行合并操作。
    *
-   * This constant should be a power of two.  It was 64 in Tim Peter's C
-   * implementation, but 32 was empirically determined to work better in
-   * this implementation.  In the unlikely event that you set this constant
-   * to be a number that's not a power of two, you'll need to change the
-   * minRunLength computation.
+   * 此常量应该是 2 的幂。在 Tim Peter 的 C 实现中是 64，但经验证明
+   * 在此实现中 32 效果更好。如果你将此常量设置为非 2 的幂的数字，
+   * 你需要更改 minRunLength 计算。
    *
-   * If you decrease this constant, you must change the stackLen
-   * computation in the TimSort constructor, or you risk an
-   * ArrayOutOfBounds exception.  See listsort.txt for a discussion
-   * of the minimum stack length required as a function of the length
-   * of the array being sorted and the minimum merge sequence length.
+   * 如果你减少此常量，必须更改 TimSort 构造函数中的 stackLen 计算，
+   * 否则会有 ArrayOutOfBounds 异常的风险。有关作为被排序数组长度和
+   * 最小合并序列长度函数所需的最小栈长度的讨论，请参见 listsort.txt。
    */
   private static final int MIN_MERGE = 32;
 
@@ -84,38 +160,34 @@ class TimSort<K, Buffer> {
   }
 
   /**
-   * A stable, adaptive, iterative mergesort that requires far fewer than
-   * n lg(n) comparisons when running on partially sorted arrays, while
-   * offering performance comparable to a traditional mergesort when run
-   * on random arrays.  Like all proper mergesorts, this sort is stable and
-   * runs O(n log n) time (worst case).  In the worst case, this sort requires
-   * temporary storage space for n/2 object references; in the best case,
-   * it requires only a small constant amount of space.
+   * 一个稳定的、自适应的、迭代式归并排序，在部分有序数组上运行时需要的比较次数
+   * 远少于 n lg(n)，同时在随机数组上运行时提供与传统归并排序相当的性能。
+   * 像所有合适的归并排序一样，此排序是稳定的，运行时间为 O(n log n)（最坏情况）。
+   * 在最坏情况下，此排序需要 n/2 个对象引用的临时存储空间；在最好情况下，
+   * 它只需要少量常数空间。
    *
-   * This implementation was adapted from Tim Peters's list sort for
-   * Python, which is described in detail here:
+   * 此实现改编自 Tim Peters 为 Python 编写的列表排序，详细描述见：
    *
    *   http://svn.python.org/projects/python/trunk/Objects/listsort.txt
    *
-   * Tim's C code may be found here:
+   * Tim 的 C 代码可在此处找到：
    *
    *   http://svn.python.org/projects/python/trunk/Objects/listobject.c
    *
-   * The underlying techniques are described in this paper (and may have
-   * even earlier origins):
+   * 底层技术在此论文中有描述（可能有更早的起源）：
    *
    *  "Optimistic Sorting and Information Theoretic Complexity"
    *  Peter McIlroy
    *  SODA (Fourth Annual ACM-SIAM Symposium on Discrete Algorithms),
    *  pp 467-474, Austin, Texas, 25-27 January 1993.
    *
-   * While the API to this class consists solely of static methods, it is
-   * (privately) instantiable; a TimSort instance holds the state of an ongoing
-   * sort, assuming the input array is large enough to warrant the full-blown
-   * TimSort. Small arrays are sorted in place, using a binary insertion sort.
+   * 虽然此类的 API 仅包含静态方法，但它是（私有地）可实例化的；
+   * TimSort 实例保存正在进行的排序状态，假设输入数组足够大以保证
+   * 完整的 TimSort。小数组使用二分插入排序就地排序。
    *
    * @author Josh Bloch
    */
+
   public void sort(Buffer a, int lo, int hi, Comparator<? super K> c) {
     assert c != null;
 
