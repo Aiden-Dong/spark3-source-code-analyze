@@ -153,7 +153,7 @@ private[spark] class SerializerManager(
   }
 
   /**
-   * Wrap an output stream for compression if block compression is enabled for its block type
+   * 指定输出时是否开启了压缩
    */
   def wrapForCompression(blockId: BlockId, s: OutputStream): OutputStream = {
     if (shouldCompress(blockId)) compressionCodec.compressedOutputStream(s) else s

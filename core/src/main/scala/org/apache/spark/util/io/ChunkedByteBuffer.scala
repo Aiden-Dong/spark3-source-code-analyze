@@ -34,6 +34,8 @@ import org.apache.spark.unsafe.array.ByteArrayMethods
 import org.apache.spark.util.Utils
 
 /**
+ * ChunkedByteBuffer是Spark中的**分块字节缓冲区**，用于处理**大型数据块**，将数据分割成多个小块存储，避免单个巨大数组的限制。
+ *
  * Read-only byte buffer which is physically stored as multiple chunks rather than a single
  * contiguous array.
  *
@@ -58,6 +60,7 @@ private[spark] class ChunkedByteBuffer(var chunks: Array[ByteBuffer]) {
    */
   val size: Long = chunks.map(_.limit().asInstanceOf[Long]).sum
 
+  // // 从单个ByteBuffer创建
   def this(byteBuffer: ByteBuffer) = {
     this(Array(byteBuffer))
   }
@@ -97,6 +100,7 @@ private[spark] class ChunkedByteBuffer(var chunks: Array[ByteBuffer]) {
    * @throws UnsupportedOperationException if this buffer's size exceeds the maximum array size.
    */
   def toArray: Array[Byte] = {
+    // Java数组最大长度限制 -- 约 2G
     if (size >= ByteArrayMethods.MAX_ROUNDED_ARRAY_LENGTH) {
       throw new UnsupportedOperationException(
         s"cannot call toArray because buffer size ($size bytes) exceeds maximum array size")
@@ -172,6 +176,7 @@ private[spark] class ChunkedByteBuffer(var chunks: Array[ByteBuffer]) {
 
 private[spark] object ChunkedByteBuffer {
 
+  // 从ManagedBuffer创建
   def fromManagedBuffer(data: ManagedBuffer): ChunkedByteBuffer = {
     data match {
       case f: FileSegmentManagedBuffer =>
@@ -183,9 +188,11 @@ private[spark] object ChunkedByteBuffer {
     }
   }
 
+  // 从文件创建
   def fromFile(file: File): ChunkedByteBuffer = {
     fromFile(file, 0, file.length())
   }
+
 
   private def fromFile(
       file: File,

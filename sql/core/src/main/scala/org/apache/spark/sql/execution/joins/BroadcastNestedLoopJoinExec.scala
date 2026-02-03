@@ -115,7 +115,7 @@ case class BroadcastNestedLoopJoinExec(
    */
   private def innerJoin(relation: Broadcast[Array[InternalRow]]): RDD[InternalRow] = {
     streamed.execute().mapPartitionsInternal { streamedIter =>
-      val buildRows = relation.value
+        val buildRows = relation.value
       val joinedRow = new JoinedRow
 
       streamedIter.flatMap { streamedRow =>

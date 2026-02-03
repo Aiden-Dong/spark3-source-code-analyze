@@ -40,7 +40,7 @@ class StorageLevel private(
     private var _useDisk: Boolean,
     private var _useMemory: Boolean,
     private var _useOffHeap: Boolean,
-    private var _deserialized: Boolean,
+    private var _deserialized: Boolean,  // true : java对象， false: 序列化字节数组
     private var _replication: Int = 1)
   extends Externalizable {
 

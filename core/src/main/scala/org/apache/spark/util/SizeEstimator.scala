@@ -56,14 +56,8 @@ private[spark] trait KnownSizeEstimation {
 object SizeEstimator extends Logging {
 
   /**
-   * Estimate the number of bytes that the given object takes up on the JVM heap. The estimate
-   * includes space taken up by objects referenced by the given object, their references, and so on
-   * and so forth.
-   *
-   * This is useful for determining the amount of heap space a broadcast variable will occupy on
-   * each executor or the amount of space each object will take when caching objects in
-   * deserialized form. This is not the same as the serialized size of the object, which will
-   * typically be much smaller.
+   * 估算对象在内存中的实际占用大小（包括它引用的所有对象），用于评估广播变量或缓存对象的内存开销。
+   * 注意这是内存占用，不是序列化后的大小。
    */
   def estimate(obj: AnyRef): Long = estimate(obj, new IdentityHashMap[AnyRef, AnyRef])
 

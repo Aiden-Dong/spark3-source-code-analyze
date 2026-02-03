@@ -32,21 +32,62 @@ import org.apache.spark.unsafe.array.ByteArrayMethods
 import org.apache.spark.unsafe.memory.MemoryAllocator
 import org.apache.spark.util.Utils
 
-/**
+/*
+ ***************************************************************************************
  * 一个抽象的内存管理器，用于管理执行内存和存储内存之间的共享方式。
- * 在此上下文中，执行内存是指用于洗牌（shuffles）、连接（joins）、排序（sorts）和聚合（aggregations）计算的内存，而存储内存是指用于缓存和在集群内传播内部数据的内存。
+ * • **执行内存 (Execution Memory)**: 用于 shuffle、join、sort、aggregation 等计算操作
+ * • **存储内存 (Storage Memory)**: 用于缓存数据和集群内数据传输
  * 每个JVM（Java虚拟机）中存在一个MemoryManager。
+ *
+ * ┌─────────────────────────────────────────────────────────────────────────────────┐
+   │                           Spark 内存管理架构图                                    │
+   └─────────────────────────────────────────────────────────────────────────────────┘
+
+                              MemoryManager
+                         ┌─────────────────────┐
+                         │   统一内存管理器      │
+                         │  - maxHeapMemory    │
+                         │  - 内存池协调        │
+                         └──────────┬──────────┘
+                                    │
+                    ┌───────────────┼───────────────┐
+                    │               │               │
+            ┌───────▼────────┐               ┌──────▼──────┐
+            │ ExecutionMemory│               │StorageMemory│
+            │     Pool       │◄────借用────►  │    Pool     │
+            │ - 执行内存池     │               │ - 存储内存池 │
+            │ - Task分配      │               │ - 缓存管理   │
+            └────────────────┘               └──────┬──────┘
+                                                   │
+                                                   │ 持有引用
+                                                   │
+                                            ┌──────▼──────┐
+                                            │ MemoryStore │
+                                            │ 内存数据存储 │
+                                            │             │
+                                            └──────┬──────┘
+                                                   │
+                                                   │ 管理
+                                                   │
+                    ┌──────────────────────────────▼──────────────────────────────┐
+                    │                    Block 存储映射                            │
+                    │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐        │
+                    │  │Block-1  │  │Block-2  │  │Block-3  │  │Block-N  │   ...  │
+                    │  │(RDD缓存) │ │(广播变量)│  │(Shuffle)│  │(临时数据)│        │
+                    │  └─────────┘  └─────────┘  └─────────┘  └─────────┘        │
+                    └─────────────────────────────────────────────────────────────┘
+ ***************************************************************************************
  */
 private[spark] abstract class MemoryManager(
     conf: SparkConf,
     numCores: Int,
-    onHeapStorageMemory: Long,
-    onHeapExecutionMemory: Long) extends Logging {
+    onHeapStorageMemory: Long,                       // 用与存储的内存大小
+    onHeapExecutionMemory: Long) extends Logging {   // 用于计算的内存大小
 
   require(onHeapExecutionMemory > 0, "onHeapExecutionMemory must be > 0")
 
   /********************************************************************************************
-   *                                   内存资源池                                              *
+   *                                   内存资源池                                               *
    ********************************************************************************************/
 
   @GuardedBy("this") protected val onHeapStorageMemoryPool = new StorageMemoryPool(this, MemoryMode.ON_HEAP)        // 堆内存储内存池
@@ -60,6 +101,7 @@ private[spark] abstract class MemoryManager(
 
   protected[this] val maxOffHeapMemory = conf.get(MEMORY_OFFHEAP_SIZE)  // spark.memory.offHeap.size
   protected[this] val offHeapStorageMemory = (maxOffHeapMemory * conf.get(MEMORY_STORAGE_FRACTION)).toLong
+
   offHeapExecutionMemoryPool.incrementPoolSize(maxOffHeapMemory - offHeapStorageMemory)
   offHeapStorageMemoryPool.incrementPoolSize(offHeapStorageMemory)
 

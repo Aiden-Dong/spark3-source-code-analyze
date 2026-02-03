@@ -92,7 +92,7 @@ case object REBALANCE_PARTITIONS_BY_NONE extends ShuffleOrigin
 // 与 REBALANCE_PARTITIONS_BY_NONE 不同，这种情况下不能使用本地洗牌读取，因为输出需要按照给定的列进行分区。
 case object REBALANCE_PARTITIONS_BY_COL extends ShuffleOrigin
 
-/**
+/**zhengz
  * 执行一个洗牌操作，将会得到所需的分区。
  */
 case class ShuffleExchangeExec(

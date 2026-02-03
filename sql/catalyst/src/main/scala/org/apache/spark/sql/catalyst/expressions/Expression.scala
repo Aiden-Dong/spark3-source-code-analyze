@@ -85,32 +85,30 @@ import org.apache.spark.sql.types._
  */
 abstract class Expression extends TreeNode[Expression] {
 
-  /**
-   * 数据类型
-   * 表达式计算结果的数据类型
-   * 必须在表达式解析后确定
-   */
+  /*====================================================*
+   * 基础属性方法
+   *====================================================*/
+
+  /// 返回表达式的数据类型
   def dataType: DataType
 
-  /**
-   * 可折叠性
-   * 是否可以在编译时计算
-   * 常量表达式通常是可折叠的
-   */
+  ///  判断表达式是否可在编译时常量折叠优化
   def foldable: Boolean = false
 
-  /**
+  /// 判断表达式是否确定性（相同输入总是产生相同输出）
+  lazy val deterministic: Boolean = children.forall(_.deterministic)
+
+  /// 返回表达式引用的属性集合
+  def references: AttributeSet = _references
+
+  /*====================================================*
    * 求值方法
-   * 解释执行模式下的求值方法
-   * 接收输入行，返回计算结果
-   */
+   *====================================================*/
+
+  /// 在给定输入行上求值表达式，返回结果
   def eval(input: InternalRow = null): Any
 
-  /**
-   * 代码生成
-   * • 生成 Java 代码进行编译执行
-   * • 性能优于解释执行
-   */
+  /// 生成Java代码用于代码生成优化
   def genCode(ctx: CodegenContext): ExprCode = {
     ctx.subExprEliminationExprs.get(ExpressionEquals(this)).map { subExprState =>
       // This expression is repeated which means that the code to evaluate it has already been added
@@ -135,38 +133,63 @@ abstract class Expression extends TreeNode[Expression] {
     }
   }
 
-  /**
-   * 当当前表达式对于来自子节点的固定输入始终返回相同的结果时，返回 true。
-   * 非确定性表达式在数量和顺序上不应更改。它们在查询规划过程中不应被评估。
-   *
-   * 请注意，这意味着如果一个表达式：
-   *
-   * 依赖于某些可变的内部状态，或者
-   * 依赖于不是子表达式列表的一部分的某些隐式输入，或者
-   * 具有非确定性的子表达式或子表达式，或者
-   * 它假定输入通过子运算符满足某些特定条件
-   * 则应将其视为非确定性的。
-   *
-   * 一个例子是 SparkPartitionID，它依赖于 TaskContext 返回的分区 id。默认情况下，叶表达式是确定性的，因为 Nil.forall(_.deterministic) 返回 true。
-   */
-  lazy val deterministic: Boolean = children.forall(_.deterministic)
+  ///  具体的代码生成实现
+  protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode
 
-  /**
-   * 类型检查
-   * • 验证输入参数类型是否正确
-   * • 在分析阶段调用
-   */
+  /*====================================================*
+   * 解析和类型检查
+   *====================================================*/
+
+  //// 判断表达式是否已解析（所有子表达式已解析且类型检查通过）
+  lazy val resolved: Boolean = childrenResolved && checkInputDataTypes().isSuccess
+
+  /// 判断所有子表达式是否已解析
+  def childrenResolved: Boolean = children.forall(_.resolved)
+
+  /// 检查输入数据类型是否有效
   def checkInputDataTypes(): TypeCheckResult = TypeCheckResult.TypeCheckSuccess
+
+  /*====================================================*
+   * 语义比较
+   *====================================================*/
+
+  //// 返回规范化的表达式，用于语义比较
+  lazy val canonicalized: Expression = {
+    val canonicalizedChildren = children.map(_.canonicalized)
+    withNewChildren(canonicalizedChildren)
+  }
+
+  //// 判断两个表达式是否语义相等s
+  final def semanticEquals(other: Expression): Boolean =
+    deterministic && other.deterministic && canonicalized == other.canonicalized
+
+  //// 返回语义哈希值
+  def semanticHash(): Int = canonicalized.hashCode()
+
+  /*====================================================*
+   * 字符串表示
+   *====================================================*/
+
+  // 返回用户友好的表达式名称
+  def prettyName: String = getTagValue(FunctionRegistry.FUNC_ALIAS)
+    .getOrElse(nodeName.toLowerCase(Locale.ROOT))
+
+  // 返回表达式的字符串表示
+  override def toString: String = prettyName + truncatedString(
+    flatArguments.toSeq, "(", ", ", ")", SQLConf.get.maxToStringFields)
+
+  // 返回表达式的SQL表示
+  def sql: String = {
+    val childrenSQL = children.map(_.sql).mkString(", ")
+    s"$prettyName($childrenSQL)"
+  }
+
 
   def nullable: Boolean
 
   // 为了在懒加载值上调用 super，可以使用以下工作方式
   @transient
   private lazy val _references: AttributeSet = AttributeSet.fromAttributeSets(children.map(_.references))
-
-  def references: AttributeSet = _references
-
-
 
 
 
@@ -201,71 +224,11 @@ abstract class Expression extends TreeNode[Expression] {
     }
   }
 
-  /**
-   * 返回可以编译以评估此表达式的 Java 源代码。
-   * 默认行为是调用表达式的 eval 方法。
-   * 具体的表达式实现应该重写这个方法以执行实际的代码生成。
-   *
-   * @param ctx a [[CodegenContext]]
-   * @param ev an [[ExprCode]] with unique terms.
-   * @return an [[ExprCode]] containing the Java source code to generate the given expression
-   */
-  protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode
-
-  /**
-   * 如果此表达式及其所有子项已解析为特定模式，并且输入数据类型检查已通过，则返回 true；
-   * 如果它仍然包含任何未解析的占位符或数据类型不匹配，则返回 false。
-   * 如果此类表达式的解析涉及的不仅仅是其子项的解析和类型检查，则表达式的实现应该重写此方法。
-   */
-  lazy val resolved: Boolean = childrenResolved && checkInputDataTypes().isSuccess
-
-
-  /**
-   * 如果此表达式的所有子项都已解析为特定模式，则返回 true；
-   * 如果任何子项仍包含任何未解析的占位符，则返回 false。
-   */
-  def childrenResolved: Boolean = children.forall(_.resolved)
-
-  /**
-   * 返回一个表达式，尽最大努力尝试将 this 转换为一种方式，该方式保留结果但移除外观变化（大小写敏感性、交换操作的顺序等）。
-   * 当 this.canonicalized==other.canonicalized时，deterministic 表达式将始终产生相同的结果。
-   *
-   * 规范化的过程是基于一次遍历的、自底向上的表达式树计算，基于规范化子节点之前的规范化当前节点。
-   * 但有一个例外，就是相邻的、同一类的 [[CommutativeExpression]] 的规范化过程会按照以下方式进行，调用 canonicalized：
-   *
-   * 收集并规范化相邻表达式的非交换（或交换但不是相同类别）子表达式。
-   * 按照它们的哈希码重新排列规范化的子表达式。
-   * 这意味着惰性的 canonicalized 只在相邻表达式的根上调用和计算。
-   */
-  lazy val canonicalized: Expression = {
-    val canonicalizedChildren = children.map(_.canonicalized)
-    withNewChildren(canonicalizedChildren)
-  }
-
-  /**
-   * 当两个表达式始终计算相同的结果时返回 true，即使它们在外观上有所不同（即属性名称的大小写可能不同）。
-   * See [[Canonicalize]] for more details.
-   */
-  final def semanticEquals(other: Expression): Boolean =
-    deterministic && other.deterministic && canonicalized == other.canonicalized
-
-  /**
-   * 返回此表达式执行的计算的 hashCode。
-   * 与标准的hashCode不同，尝试消除外观上的差异。
-   *
-   * See [[Canonicalize]] for more details.
-   */
-  def semanticHash(): Int = canonicalized.hashCode()
-
-
 
   /**
    * 返回此表达式名称的用户可见字符串表示形式。
    * 这通常应与 SQL 中函数的名称匹配。
    */
-  def prettyName: String = getTagValue(FunctionRegistry.FUNC_ALIAS)
-      .getOrElse(nodeName.toLowerCase(Locale.ROOT))
-
   protected def flatArguments: Iterator[Any] = stringArgs.flatMap {
     case t: Iterable[_] => t
     case single => single :: Nil
@@ -276,18 +239,6 @@ abstract class Expression extends TreeNode[Expression] {
   final override def verboseString(maxFields: Int): String = simpleString(maxFields)
 
   override def simpleString(maxFields: Int): String = toString
-
-  override def toString: String = prettyName + truncatedString(
-    flatArguments.toSeq, "(", ", ", ")", SQLConf.get.maxToStringFields)
-
-  /**
-   * 返回此表达式的 SQL 表示。
-   * 对于扩展了 [[NonSQLExpression]] 的表达式，此方法可能返回任意的用户可见字符串。
-   */
-  def sql: String = {
-    val childrenSQL = children.map(_.sql).mkString(", ")
-    s"$prettyName($childrenSQL)"
-  }
 
   override def simpleStringWithNodeId(): String = {
     throw new IllegalStateException(s"$nodeName does not implement simpleStringWithNodeId")

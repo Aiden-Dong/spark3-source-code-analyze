@@ -36,92 +36,65 @@ import org.apache.spark.unsafe.memory.MemoryBlock;
 import org.apache.spark.util.Utils;
 
 /**
- * Manages the memory allocated by an individual task.
- * <p>
- * Most of the complexity in this class deals with encoding of off-heap addresses into 64-bit longs.
- * In off-heap mode, memory can be directly addressed with 64-bit longs. In on-heap mode, memory is
- * addressed by the combination of a base Object reference and a 64-bit offset within that object.
- * This is a problem when we want to store pointers to data structures inside of other structures,
- * such as record pointers inside hashmaps or sorting buffers. Even if we decided to use 128 bits
- * to address memory, we can't just store the address of the base object since it's not guaranteed
- * to remain stable as the heap gets reorganized due to GC.
- * <p>
- * Instead, we use the following approach to encode record pointers in 64-bit longs: for off-heap
- * mode, just store the raw address, and for on-heap mode use the upper 13 bits of the address to
- * store a "page number" and the lower 51 bits to store an offset within this page. These page
- * numbers are used to index into a "page table" array inside of the MemoryManager in order to
- * retrieve the base object.
- * <p>
- * This allows us to address 8192 pages. In on-heap mode, the maximum page size is limited by the
- * maximum size of a long[] array, allowing us to address 8192 * (2^31 - 1) * 8 bytes, which is
- * approximately 140 terabytes of memory.
+ * TaskMemoryManager 是Spark中负责管理单个任务内存分配的核心类。以下是其主要功能和设计要点：
+ *
+ * ### 核心职责
+ * 1. 任务级内存管理 - 管理单个Task的内存分配和释放
+ * 2. 页表管理 - 维护内存页的映射表，支持堆内和堆外内存
+ * 3. 内存溢出协调 - 当内存不足时协调各个消费者进行溢出操作
+ *
+ * 1. 地址编码机制
+ * • 使用64位long来编码内存地址
+ * • 高13位存储页号(page number)，低51位存储页内偏移
+ * • 支持最多8192个页面，每页最大17GB
  */
 public class TaskMemoryManager {
 
   private static final Logger logger = LoggerFactory.getLogger(TaskMemoryManager.class);
 
-  /** The number of bits used to address the page table. */
-  private static final int PAGE_NUMBER_BITS = 13;
-
-  /** The number of bits used to encode offsets in data pages. */
+  private static final int PAGE_NUMBER_BITS = 13;                            // 定义页号占用的位数(13位)，决定了最多可以管理8192个页面
   @VisibleForTesting
-  static final int OFFSET_BITS = 64 - PAGE_NUMBER_BITS;  // 51
+  static final int OFFSET_BITS = 64 - PAGE_NUMBER_BITS;                       // 页内偏移占用的位数(51位)，决定了单个页面的最大寻址空间
+  private static final int PAGE_TABLE_SIZE = 1 << PAGE_NUMBER_BITS;           // 页表大小(8192)，即最多可管理的页面数量
 
-  /** The number of entries in the page table. */
-  private static final int PAGE_TABLE_SIZE = 1 << PAGE_NUMBER_BITS;
+  public static final long MAXIMUM_PAGE_SIZE_BYTES = ((1L << 31) - 1) * 8L;   // 单个页面的最大字节数(约17GB)，受限于Java数组的最大长度
+  private static final long MASK_LONG_LOWER_51_BITS = 0x7FFFFFFFFFFFFL;       // 用于提取64位地址中低51位偏移量的位掩码
 
-  /**
-   * Maximum supported data page size (in bytes). In principle, the maximum addressable page size is
-   * (1L &lt;&lt; OFFSET_BITS) bytes, which is 2+ petabytes. However, the on-heap allocator's
-   * maximum page size is limited by the maximum amount of data that can be stored in a long[]
-   * array, which is (2^31 - 1) * 8 bytes (or about 17 gigabytes). Therefore, we cap this at 17
-   * gigabytes.
-   */
-  public static final long MAXIMUM_PAGE_SIZE_BYTES = ((1L << 31) - 1) * 8L;
-
-  /** Bit mask for the lower 51 bits of a long. */
-  private static final long MASK_LONG_LOWER_51_BITS = 0x7FFFFFFFFFFFFL;
-
-  /**
-   * Similar to an operating system's page table, this array maps page numbers into base object
-   * pointers, allowing us to translate between the hashtable's internal 64-bit address
-   * representation and the baseObject+offset representation which we use to support both on- and
-   * off-heap addresses. When using an off-heap allocator, every entry in this map will be `null`.
-   * When using an on-heap allocator, the entries in this map will point to pages' base objects.
-   * Entries are added to this map as new data pages are allocated.
-   */
+  // 页表数组，类似操作系统的页表
+  //• 索引为页号，值为MemoryBlock对象
+  //• 堆外模式时所有条目为null
+  //• 堆内模式时指向页面的基础对象
   private final MemoryBlock[] pageTable = new MemoryBlock[PAGE_TABLE_SIZE];
 
-  /**
-   * Bitmap for tracking free pages.
-   */
+  // 位图，跟踪哪些页面已被分配
+  //• 每一位对应一个页面槽位
+  //• 1表示已分配，0表示空闲
   private final BitSet allocatedPages = new BitSet(PAGE_TABLE_SIZE);
 
+  // 引用全局内存管理器
+  // 负责实际的内存分配/释放
+  // 协调不同任务间的内存使用
   private final MemoryManager memoryManager;
 
+  // 任务尝试ID，用于标识当前任务
   private final long taskAttemptId;
 
-  /**
-   * 跟踪我们是在堆上还是在堆外。
-   *   对于堆外情况，我们会短路大部分这些方法，而不进行任何掩码或查找。
-   *   由于这个分支应该被 JIT 良好预测，因此这额外的间接层/抽象希望不会太昂贵。
-   */
+  // 作用: 当前使用的内存模式
+  //• ON_HEAP: 堆内内存模式
+  //• OFF_HEAP: 堆外内存模式
+  //• 影响地址编码和内存分配策略
   final MemoryMode tungstenMemoryMode;
 
-  /**
-   * Tracks spillable memory consumers.
-   */
+  // 作用: 跟踪所有内存消费者
+  //• 存储当前任务中所有申请过内存的消费者
+  //• 用于内存不足时的溢出决策
+  //• 线程安全，需要同步访问
   @GuardedBy("this")
   private final HashSet<MemoryConsumer> consumers;
 
-  /**
-   * The amount of memory that is acquired but not used.
-   */
+  // 跟踪已获取但未使用的内存量
   private volatile long acquiredButNotUsed = 0L;
 
-  /**
-   * Construct a new TaskMemoryManager.
-   */
   public TaskMemoryManager(MemoryManager memoryManager, long taskAttemptId) {
     this.tungstenMemoryMode = memoryManager.tungstenMemoryMode();
     this.memoryManager = memoryManager;
@@ -130,32 +103,32 @@ public class TaskMemoryManager {
   }
 
   /**
-   * 为消费者获取 N 字节的内存。如果内存不足，它将调用消费者的 spill() 以释放更多内存。
-   *
+   ***************************************************************************************
+   * 为requestingConsumer申请指定数量的内存(required), 如果当前资源不足， 则为其他消费者调用 spill() 释放资源给他
    * @return 成功授予的字节数（<= N）。
+   * **************************************************************************************
    */
   public long acquireExecutionMemory(long required, MemoryConsumer requestingConsumer) {
     assert(required >= 0);
     assert(requestingConsumer != null);
+
+    // TODO-1: 获取消费者的内存模式
     MemoryMode mode = requestingConsumer.getMode();
-    // 如果我们在堆外分配 Tungsten 页面，并在这里收到请求以分配堆内内存，那么溢出可能没有意义，因为这只会释放堆外内存。
-    // 然而，这个情况可能会发生变化，因此现在进行这个优化可能风险较大，以防我们在进行更改时忘记撤销它。
+
     synchronized (this) {
+
+      // TODO-2 : 申请执行内存
       long got = memoryManager.acquireExecutionMemory(required, taskAttemptId, mode);
 
-      // 首先尝试从其他消费者那里释放内存，然后我们可以减少溢出的频率，避免产生过多的溢出文件。
+      // TODO-3 : 如果申请到的内存大小小于请求的内存量(内存不足)
+      //  首先尝试从其他消费者那里释放内存，然后我们可以减少溢出的频率，避免产生过多的溢出文件。
       if (got < required) {
-        logger.debug("Task {} need to spill {} for {}", taskAttemptId,
-          Utils.bytesToString(required - got), requestingConsumer);
-        // 我们需要调用消费者的 spill() 以释放更多内存。我们希望优化以下两点：
-        // * 尽量减少溢出调用的次数，以减少溢出文件的数量并避免生成小的溢出文件。
-        // * 避免溢出比所需更多的数据——如果我们只需要一点额外内存，可能不希望溢出尽可能多的数据。
-        //   许多消费者溢出的数据量超过了请求的量，所以我们可以在决策时考虑这一点。
-        // 我们使用一种启发式方法，选择至少拥有 `required` 字节内存的最小内存消费者，以平衡这些因素。
-        //   如果请求较少且较大，该方法可能表现良好，但如果有很多小请求，则可能导致许多小溢出。
+        logger.debug("Task {} need to spill {} for {}", taskAttemptId, Utils.bytesToString(required - got), requestingConsumer);
 
-        // 根据内存使用情况构建消费者的映射，以优先考虑溢出。为当前消费者（如果存在）分配一个名义内存使用量为 0，使其始终在优先级顺序中排在最后。该映射将包括所有以前获得过内存的消费者。
+        // 获取其他的内存消费者
         TreeMap<Long, List<MemoryConsumer>> sortedConsumers = new TreeMap<>();
+
+        // 构建消费者优先级映射
         for (MemoryConsumer c: consumers) {
           if (c.getUsed() > 0 && c.getMode() == mode) {
             long key = c == requestingConsumer ? 0 : c.getUsed();
@@ -163,16 +136,15 @@ public class TaskMemoryManager {
             list.add(c);
           }
         }
-        // Iteratively spill consumers until we've freed enough memory or run out of consumers.
+
         while (got < required && !sortedConsumers.isEmpty()) {
-          // Get the consumer using the least memory more than the remaining required memory.
-          Map.Entry<Long, List<MemoryConsumer>> currentEntry =
-            sortedConsumers.ceilingEntry(required - got);
-          // No consumer has enough memory on its own, start with spilling the biggest consumer.
+          // 返回键值大于或等于给定键的最小条目
+          Map.Entry<Long, List<MemoryConsumer>> currentEntry = sortedConsumers.ceilingEntry(required - got);
           if (currentEntry == null) {
             currentEntry = sortedConsumers.lastEntry();
           }
           List<MemoryConsumer> cList = currentEntry.getValue();
+          // 释放一个资源差不多打的MemoryConsumer
           got += trySpillAndAcquire(requestingConsumer, required - got, cList, cList.size() - 1);
           if (cList.isEmpty()) {
             sortedConsumers.remove(currentEntry.getKey());
@@ -181,62 +153,48 @@ public class TaskMemoryManager {
       }
 
       consumers.add(requestingConsumer);
-      logger.debug("Task {} acquired {} for {}", taskAttemptId, Utils.bytesToString(got),
-              requestingConsumer);
+      logger.debug("Task {} acquired {} for {}", taskAttemptId, Utils.bytesToString(got), requestingConsumer);
+
       return got;
     }
   }
 
   /**
-   * Try to acquire as much memory as possible from `cList[idx]`, up to `requested` bytes by
-   * spilling and then acquiring the freed memory. If no more memory can be spilled from
-   * `cList[idx]`, remove it from the list.
-   *
-   * @return number of bytes acquired (<= requested)
-   * @throws RuntimeException if task is interrupted
-   * @throws SparkOutOfMemoryError if an IOException occurs during spilling
+   * 通过调用内存消费者的 spill 方法，释放资源，并在申请指定数量的内存资源
    */
-  private long trySpillAndAcquire(
-      MemoryConsumer requestingConsumer,
-      long requested,
-      List<MemoryConsumer> cList,
-      int idx) {
-    MemoryMode mode = requestingConsumer.getMode();
-    MemoryConsumer consumerToSpill = cList.get(idx);
-    logger.debug("Task {} try to spill {} from {} for {}", taskAttemptId,
-      Utils.bytesToString(requested), consumerToSpill, requestingConsumer);
+  private long trySpillAndAcquire(MemoryConsumer requestingConsumer, long requested, List<MemoryConsumer> cList, int idx) {
+
+    MemoryMode mode = requestingConsumer.getMode();   // 获取内存模式
+    MemoryConsumer consumerToSpill = cList.get(idx);  // 获取待释放资源的
+
+    logger.debug("Task {} try to spill {} from {} for {}", taskAttemptId, Utils.bytesToString(requested), consumerToSpill, requestingConsumer);
+
     try {
-      long released = consumerToSpill.spill(requested, requestingConsumer);
+      long released = consumerToSpill.spill(requested, requestingConsumer);  // 释放当前消费者资源
       if (released > 0) {
         logger.debug("Task {} spilled {} of requested {} from {} for {}", taskAttemptId,
           Utils.bytesToString(released), Utils.bytesToString(requested), consumerToSpill,
           requestingConsumer);
 
-        // When our spill handler releases memory, `ExecutionMemoryPool#releaseMemory()` will
-        // immediately notify other tasks that memory has been freed, and they may acquire the
-        // newly-freed memory before we have a chance to do so (SPARK-35486). Therefore we may
-        // not be able to acquire all the memory that was just spilled. In that case, we will
-        // try again in the next loop iteration.
         return memoryManager.acquireExecutionMemory(requested, taskAttemptId, mode);
       } else {
         cList.remove(idx);
         return 0;
       }
     } catch (ClosedByInterruptException e) {
-      // This called by user to kill a task (e.g: speculative task).
       logger.error("error while calling spill() on " + consumerToSpill, e);
       throw new RuntimeException(e.getMessage());
     } catch (IOException e) {
       logger.error("error while calling spill() on " + consumerToSpill, e);
-      // checkstyle.off: RegexpSinglelineJava
-      throw new SparkOutOfMemoryError("error while calling spill() on " + consumerToSpill + " : "
-        + e.getMessage());
-      // checkstyle.on: RegexpSinglelineJava
+      throw new SparkOutOfMemoryError("error while calling spill() on " + consumerToSpill + " : " + e.getMessage());
     }
   }
 
-  /**
-   * Release N bytes of execution memory for a MemoryConsumer.
+
+  /***
+   * **************************************************************************************
+   * 释放当前消费者内存资源
+   * **************************************************************************************
    */
   public void releaseExecutionMemory(long size, MemoryConsumer consumer) {
     logger.debug("Task {} release {} from {}", taskAttemptId, Utils.bytesToString(size), consumer);
@@ -246,8 +204,10 @@ public class TaskMemoryManager {
   /**
    * Dump the memory usage of all consumers.
    */
+
   public void showMemoryUsage() {
     logger.info("Memory used in task " + taskAttemptId);
+
     synchronized (this) {
       long memoryAccountedForByConsumers = 0;
       for (MemoryConsumer c: consumers) {
@@ -257,13 +217,13 @@ public class TaskMemoryManager {
           logger.info("Acquired by " + c + ": " + Utils.bytesToString(totalMemUsage));
         }
       }
-      long memoryNotAccountedFor =
-        memoryManager.getExecutionMemoryUsageForTask(taskAttemptId) - memoryAccountedForByConsumers;
-      logger.info(
-        "{} bytes of memory were used by task {} but are not associated with specific consumers",
+
+      long memoryNotAccountedFor = memoryManager.getExecutionMemoryUsageForTask(taskAttemptId) - memoryAccountedForByConsumers;
+
+      logger.info("{} bytes of memory were used by task {} but are not associated with specific consumers",
         memoryNotAccountedFor, taskAttemptId);
-      logger.info(
-        "{} bytes of memory are used for execution and {} bytes of memory are used for storage",
+
+      logger.info("{} bytes of memory are used for execution and {} bytes of memory are used for storage",
         memoryManager.executionMemoryUsed(), memoryManager.storageMemoryUsed());
     }
   }
@@ -297,28 +257,31 @@ public class TaskMemoryManager {
     }
 
     final int pageNumber;
+
     synchronized (this) {
-      pageNumber = allocatedPages.nextClearBit(0);
+      pageNumber = allocatedPages.nextClearBit(0);  // 找到最近的没有分配的一个物理快
+
       if (pageNumber >= PAGE_TABLE_SIZE) {
         releaseExecutionMemory(acquired, consumer);
-        throw new IllegalStateException(
-          "Have already allocated a maximum of " + PAGE_TABLE_SIZE + " pages");
+        throw new IllegalStateException("Have already allocated a maximum of " + PAGE_TABLE_SIZE + " pages");
       }
+
       allocatedPages.set(pageNumber);
     }
+
     MemoryBlock page = null;
+
     try {
       // 分配内存资源
-      page = memoryManager.tungstenMemoryAllocator().allocate(acquired);
+      page = memoryManager.tungstenMemoryAllocator().allocate(acquired);  // 分配一个page
     } catch (OutOfMemoryError e) {
       logger.warn("Failed to allocate a page ({} bytes), try again.", acquired);
-      // there is no enough memory actually, it means the actual free memory is smaller than
-      // MemoryManager thought, we should keep the acquired memory.
+
       synchronized (this) {
         acquiredButNotUsed += acquired;
         allocatedPages.clear(pageNumber);
       }
-      // this could trigger spilling to free some pages.
+
       return allocatePage(size, consumer);
     }
     page.pageNumber = pageNumber;
@@ -330,47 +293,35 @@ public class TaskMemoryManager {
   }
 
   /**
-   * Free a block of memory allocated via {@link TaskMemoryManager#allocatePage}.
+   * 释放一个物理快
    */
   public void freePage(MemoryBlock page, MemoryConsumer consumer) {
-    assert (page.pageNumber != MemoryBlock.NO_PAGE_NUMBER) :
-      "Called freePage() on memory that wasn't allocated with allocatePage()";
-    assert (page.pageNumber != MemoryBlock.FREED_IN_ALLOCATOR_PAGE_NUMBER) :
-      "Called freePage() on a memory block that has already been freed";
-    assert (page.pageNumber != MemoryBlock.FREED_IN_TMM_PAGE_NUMBER) :
-            "Called freePage() on a memory block that has already been freed";
+
+    assert (page.pageNumber != MemoryBlock.NO_PAGE_NUMBER) : "Called freePage() on memory that wasn't allocated with allocatePage()";
+    assert (page.pageNumber != MemoryBlock.FREED_IN_ALLOCATOR_PAGE_NUMBER) : "Called freePage() on a memory block that has already been freed";
+    assert (page.pageNumber != MemoryBlock.FREED_IN_TMM_PAGE_NUMBER) : "Called freePage() on a memory block that has already been freed";
     assert(allocatedPages.get(page.pageNumber));
+
     pageTable[page.pageNumber] = null;
+
     synchronized (this) {
       allocatedPages.clear(page.pageNumber);
     }
+
     if (logger.isTraceEnabled()) {
       logger.trace("Freed page number {} ({} bytes)", page.pageNumber, page.size());
     }
+
     long pageSize = page.size();
-    // Clear the page number before passing the block to the MemoryAllocator's free().
-    // Doing this allows the MemoryAllocator to detect when a TaskMemoryManager-managed
-    // page has been inappropriately directly freed without calling TMM.freePage().
+
     page.pageNumber = MemoryBlock.FREED_IN_TMM_PAGE_NUMBER;
     memoryManager.tungstenMemoryAllocator().free(page);
     releaseExecutionMemory(pageSize, consumer);
   }
 
-  /**
-   * Given a memory page and offset within that page, encode this address into a 64-bit long.
-   * This address will remain valid as long as the corresponding page has not been freed.
-   *
-   * @param page a data page allocated by {@link TaskMemoryManager#allocatePage}/
-   * @param offsetInPage an offset in this page which incorporates the base offset. In other words,
-   *                     this should be the value that you would pass as the base offset into an
-   *                     UNSAFE call (e.g. page.baseOffset() + something).
-   * @return an encoded page address.
-   */
+  // 将块号加块内地址转为 long 类型
   public long encodePageNumberAndOffset(MemoryBlock page, long offsetInPage) {
     if (tungstenMemoryMode == MemoryMode.OFF_HEAP) {
-      // In off-heap mode, an offset is an absolute address that may require a full 64 bits to
-      // encode. Due to our page size limitation, though, we can convert this into an offset that's
-      // relative to the page's base offset; this relative offset will fit in 51 bits.
       offsetInPage -= page.getBaseOffset();
     }
     return encodePageNumberAndOffset(page.pageNumber, offsetInPage);

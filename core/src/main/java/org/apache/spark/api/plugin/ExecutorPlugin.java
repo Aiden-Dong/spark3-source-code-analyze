@@ -32,19 +32,16 @@ import org.apache.spark.annotation.DeveloperApi;
 public interface ExecutorPlugin {
 
   /**
-   * Initialize the executor plugin.
+   * 初始化执行器插件。
    * <p>
-   * When a Spark plugin provides an executor plugin, this method will be called during the
-   * initialization of the executor process. It will block executor initialization until it
-   * returns.
+   *   当Spark插件提供执行器插件时，此方法将在执行器进程初始化期间被调用。它会阻塞执行器初始化直到返回。
    * <p>
-   * Executor plugins that publish metrics should register all metrics with the context's
-   * registry ({@link PluginContext#metricRegistry()}) when this method is called. Metrics
-   * registered afterwards are not guaranteed to show up.
+   *   发布指标的执行器插件应该在调用此方法时向上下文的注册表
+   *   （{@link PluginContext#metricRegistry()}）注册所有指标。之后注册的指标
+   *   不保证会显示。
    *
-   * @param ctx Context information for the executor where the plugin is running.
-   * @param extraConf Extra configuration provided by the driver component during its
-   *                  initialization.
+   * @param ctx 插件运行的执行器的上下文信息。
+   * @param extraConf 驱动程序组件在其初始化期间提供的额外配置。
    */
   default void init(PluginContext ctx, Map<String, String> extraConf) {}
 

@@ -20,52 +20,41 @@ package org.apache.spark.memory
 import javax.annotation.concurrent.GuardedBy
 
 /**
- * Manages bookkeeping for an adjustable-sized region of memory. This class is internal to
- * the [[MemoryManager]]. See subclasses for more details.
+ * 管理可调整大小的内存区域的簿记操作。此类是 [[MemoryManager]] 的内部类。
+ * 有关更多详细信息，请参阅子类。
  *
- * @param lock a [[MemoryManager]] instance, used for synchronization. We purposely erase the type
- *             to `Object` to avoid programming errors, since this object should only be used for
- *             synchronization purposes.
+ * @param lock 一个 [[MemoryManager]] 实例，用于同步。我们故意将类型擦除为 `Object`
+ *      以避免编程错误，因为此对象应该仅用于同步目的。
  */
 private[memory] abstract class MemoryPool(lock: Object) {
 
   @GuardedBy("lock")
-  private[this] var _poolSize: Long = 0
+  private[this] var _poolSize: Long = 0  // 当前内存池大小
 
-  /**
-   * Returns the current size of the pool, in bytes.
-   */
+
   final def poolSize: Long = lock.synchronized {
     _poolSize
   }
 
-  /**
-   * Returns the amount of free memory in the pool, in bytes.
-   */
+  // 当前已经使用的内存字节大小
+  def memoryUsed: Long
+
+  // 返回单签生育的内存数量
   final def memoryFree: Long = lock.synchronized {
     _poolSize - memoryUsed
   }
 
-  /**
-   * Expands the pool by `delta` bytes.
-   */
+  // 扩增当前内存资源池的字节大小
   final def incrementPoolSize(delta: Long): Unit = lock.synchronized {
     require(delta >= 0)
     _poolSize += delta
   }
 
-  /**
-   * Shrinks the pool by `delta` bytes.
-   */
+  // 释放当前内存资源池的大小
   final def decrementPoolSize(delta: Long): Unit = lock.synchronized {
     require(delta >= 0)
     require(delta <= _poolSize)
     require(_poolSize - delta >= memoryUsed)
     _poolSize -= delta
   }
-
-  /**
-   * Returns the amount of used memory in this pool (in bytes).
-   */
-  def memoryUsed: Long
 }

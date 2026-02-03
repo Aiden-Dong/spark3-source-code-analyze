@@ -20,6 +20,14 @@ package org.apache.spark.api.plugin;
 import org.apache.spark.annotation.DeveloperApi;
 
 /**
+ * 应用启动 → DriverPlugin.init() → DriverPlugin.registerMetrics()
+ *     ↓
+ * Executor启动 → ExecutorPlugin.init()
+ *     ↓
+ * 任务执行 → onTaskStart() → [执行] → onTaskSucceeded()/onTaskFailed()
+ *     ↓
+ * 应用结束 → ExecutorPlugin.shutdown() → DriverPlugin.shutdown()
+ *
  * :: DeveloperApi ::
  * A plugin that can be dynamically loaded into a Spark application.
  * <p>

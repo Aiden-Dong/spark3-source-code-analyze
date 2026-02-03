@@ -33,69 +33,58 @@ import org.apache.spark.annotation.DeveloperApi;
 public interface DriverPlugin {
 
   /**
-   * Initialize the plugin.
+   * 初始化插件。
    * <p>
-   * This method is called early in the initialization of the Spark driver. Explicitly, it is
-   * called before the Spark driver's task scheduler is initialized. This means that a lot
-   * of other Spark subsystems may yet not have been initialized. This call also blocks driver
-   * initialization.
+   *   此方法在Spark驱动程序初始化的早期阶段被调用。具体来说，它在Spark驱动程序的任务调度器初始化之前被调用。
+   *   这意味着许多其他Spark子系统可能尚未初始化。此调用也会阻塞驱动程序的初始化过程。
    * <p>
-   * It's recommended that plugins be careful about what operations are performed in this call,
-   * preferably performing expensive operations in a separate thread, or postponing them until
-   * the application has fully started.
+   * 建议插件谨慎处理在此调用中执行的操作，最好在单独的线程中执行昂贵的操作，或者将它们
+   * 推迟到应用程序完全启动后再执行。
    *
-   * @param sc The SparkContext loading the plugin.
-   * @param pluginContext Additional plugin-specific about the Spark application where the plugin
-   *                      is running.
-   * @return A map that will be provided to the {@link ExecutorPlugin#init(PluginContext,Map)}
-   *         method.
+   * @param sc 加载插件的SparkContext。
+   * @param pluginContext 关于运行插件的Spark应用程序的额外插件特定信息。
+   * @return 一个映射，将提供给 {@link ExecutorPlugin#init(PluginContext,Map)} 方法。
    */
   default Map<String, String> init(SparkContext sc, PluginContext pluginContext) {
     return Collections.emptyMap();
   }
 
   /**
-   * Register metrics published by the plugin with Spark's metrics system.
+   * 向Spark的指标系统注册插件发布的指标。
    * <p>
-   * This method is called later in the initialization of the Spark application, after most
-   * subsystems are up and the application ID is known. If there are metrics registered in
-   * the registry ({@link PluginContext#metricRegistry()}), then a metrics source with the
-   * plugin name will be created.
+   * 此方法在Spark应用程序初始化的后期阶段被调用，此时大多数子系统已经启动且应用程序ID
+   * 已知。如果在注册表中注册了指标（{@link PluginContext#metricRegistry()}），
+   * 则会创建一个以插件名称命名的指标源。
    * <p>
-   * Note that even though the metric registry is still accessible after this method is called,
-   * registering new metrics after this method is called may result in the metrics not being
-   * available.
+   * 请注意，即使在调用此方法后指标注册表仍然可访问，但在此方法调用后注册新指标可能会
+   * 导致这些指标不可用。
    *
-   * @param appId The application ID from the cluster manager.
-   * @param pluginContext Additional plugin-specific about the Spark application where the plugin
-   *                      is running.
+   * @param appId 来自集群管理器的应用程序ID。
+   * @param pluginContext 关于运行插件的Spark应用程序的额外插件特定信息。
    */
   default void registerMetrics(String appId, PluginContext pluginContext) {}
 
   /**
-   * RPC message handler.
+   * RPC消息处理器。
    * <p>
-   * Plugins can use Spark's RPC system to send messages from executors to the driver (but not
-   * the other way around, currently). Messages sent by the executor component of the plugin will
-   * be delivered to this method, and the returned value will be sent back to the executor as
-   * the reply, if the executor has requested one.
+   *  插件可以使用Spark的RPC系统从执行器向驱动程序发送消息（但目前不能反向发送）。
+   *  插件的执行器组件发送的消息将被传递到此方法，如果执行器请求了回复，返回值将作为回复发送回执行器。
    * <p>
-   * Any exception thrown will be sent back to the executor as an error, in case it is expecting
-   * a reply. In case a reply is not expected, a log message will be written to the driver log.
+   *   任何抛出的异常都会作为错误发送回执行器（如果它期望回复）。如果不期望回复，
+   *   则会在驱动程序日志中写入日志消息。
    * <p>
-   * The implementation of this handler should be thread-safe.
+   * 此处理器的实现应该是线程安全的。
    * <p>
-   * Note all plugins share RPC dispatch threads, and this method is called synchronously. So
-   * performing expensive operations in this handler may affect the operation of other active
-   * plugins. Internal Spark endpoints are not directly affected, though, since they use different
-   * threads.
+   * 注意所有插件共享RPC分发线程，此方法是同步调用的。因此在此处理器中执行昂贵的
+   * 操作可能会影响其他活跃插件的运行。不过内部Spark端点不会直接受到影响，因为
+   * 它们使用不同的线程。
    * <p>
-   * Spark guarantees that the driver component will be ready to receive messages through this
-   * handler when executors are started.
+   * Spark保证当执行器启动时，驱动程序组件已准备好通过此处理器接收消息。
    *
-   * @param message The incoming message.
-   * @return Value to be returned to the caller. Ignored if the caller does not expect a reply.
+   * @param message 传入的消息。
+   * @return 要返回给调用者的值。如果调用者不期望回复则忽略。
    */
+
   default Object receive(Object message) throws Exception {
     throw new UnsupportedOperationException();
   }

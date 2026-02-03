@@ -35,21 +35,17 @@ public class HeapMemoryAllocator implements MemoryAllocator {
 
   private static final int POOLING_THRESHOLD_BYTES = 1024 * 1024;
 
-  /**
-   * Returns true if allocations of the given size should go through the pooling mechanism and
-   * false otherwise.
-   */
   private boolean shouldPool(long size) {
-    // Very small allocations are less likely to benefit from pooling.
     return size >= POOLING_THRESHOLD_BYTES;
   }
 
   @Override
   public MemoryBlock allocate(long size) throws OutOfMemoryError {
-    int numWords = (int) ((size + 7) / 8);
-    long alignedSize = numWords * 8L;
+    int numWords = (int) ((size + 7) / 8);  // 计算需要多少个long
+    long alignedSize = numWords * 8L;       // 计算实际的内存大小
     assert (alignedSize >= size);
-    if (shouldPool(alignedSize)) {
+
+    if (shouldPool(alignedSize)) {  // 超过 1M
       synchronized (this) {
         final LinkedList<WeakReference<long[]>> pool = bufferPoolsBySize.get(alignedSize);
         if (pool != null) {
@@ -69,6 +65,7 @@ public class HeapMemoryAllocator implements MemoryAllocator {
         }
       }
     }
+    // 小内存直接创建
     long[] array = new long[numWords];
     MemoryBlock memory = new MemoryBlock(array, Platform.LONG_ARRAY_OFFSET, size);
     if (MemoryAllocator.MEMORY_DEBUG_FILL_ENABLED) {
@@ -77,6 +74,7 @@ public class HeapMemoryAllocator implements MemoryAllocator {
     return memory;
   }
 
+  // 释放指定的 内存块
   @Override
   public void free(MemoryBlock memory) {
     assert (memory.obj != null) :

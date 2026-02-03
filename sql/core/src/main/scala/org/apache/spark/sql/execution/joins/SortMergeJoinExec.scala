@@ -1239,31 +1239,27 @@ case class SortMergeJoinExec(
 
 
 
-
-
 /**
- * Helper class that is used to implement [[SortMergeJoinExec]].
+ * SortMergeJoinScanner 是用于实现 SortMergeJoinExec 的辅助类。
  *
- * To perform an inner (outer) join, users of this class call [[findNextInnerJoinRows()]]
- * ([[findNextOuterJoinRows()]]), which returns `true` if a result has been produced and `false`
- * otherwise. If a result has been produced, then the caller may call [[getStreamedRow]] to return
- * the matching row from the streamed input and may call [[getBufferedMatches]] to return the
- * sequence of matching rows from the buffered input (in the case of an outer join, this will return
- * an empty sequence if there are no matches from the buffered input). For efficiency, both of these
- * methods return mutable objects which are re-used across calls to the `findNext*JoinRows()`
- * methods.
+ * 功能说明：
+ * • 要执行内连接(外连接)，该类的用户调用 findNextInnerJoinRows() (findNextOuterJoinRows())方法
+ * • 这些方法返回 true 表示产生了结果，返回 false 表示没有结果
+ * • 如果产生了结果，调用者可以：
+ * • 调用 getStreamedRow 返回来自流式输入的匹配行
+ * • 调用 getBufferedMatches 返回来自缓冲输入的匹配行序列
+ * • 对于外连接，如果缓冲输入没有匹配项，将返回空序列
+ * • 为了效率，这两个方法返回的是可变对象，在多次调用 findNext*JoinRows() 方法时会被重用
  *
- * @param streamedKeyGenerator a projection that produces join keys from the streamed input.
- * @param bufferedKeyGenerator a projection that produces join keys from the buffered input.
- * @param keyOrdering an ordering which can be used to compare join keys.
- * @param streamedIter an input whose rows will be streamed.
- * @param bufferedIter an input whose rows will be buffered to construct sequences of rows that
- *                     have the same join key.
- * @param inMemoryThreshold Threshold for number of rows guaranteed to be held in memory by
- *                          internal buffer
- * @param spillThreshold Threshold for number of rows to be spilled by internal buffer
- * @param eagerCleanupResources the eager cleanup function to be invoked when no join row found
- * @param onlyBufferFirstMatch [[bufferMatchingRows]] should buffer only the first matching row
+ * @param streamedKeyGenerator 从流式输入生成连接键的投影
+ * @param bufferedKeyGenerator 从缓冲输入生成连接键的投影
+ * @param keyOrdering 用于比较连接键的排序规则
+ * @param streamedIter 将被流式处理的输入
+ * @param bufferedIter 将被缓冲的输入，用于构建具有相同连接键的行序列
+ * @param inMemoryThreshold 内部缓冲区保证在内存中保存的行数阈值
+ * @param spillThreshold 内部缓冲区溢出到磁盘的行数阈值
+ * @param eagerCleanupResources 当没有找到连接行时调用的急切清理函数
+ * @param onlyBufferFirstMatch [[bufferMatchingRows]] 是否只缓冲第一个匹配行
  */
 private[joins] class SortMergeJoinScanner(
     streamedKeyGenerator: Projection,

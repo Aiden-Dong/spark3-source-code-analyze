@@ -377,15 +377,16 @@ private[storage] class BlockInfoManager extends Logging {
   }
 
   /**
+   *
+   * 用于**原子性地创建新数据块并获取写锁**，实现了**"第一写者获胜"(first-writer-wins)**的语义。
+   *
    * Attempt to acquire the appropriate lock for writing a new block.
    *
    * This enforces the first-writer-wins semantics. If we are the first to write the block,
    * then just go ahead and acquire the write lock. Otherwise, if another thread is already
    * writing the block, then we wait for the write to finish before acquiring the read lock.
    *
-   * @return true if the block did not already exist, false otherwise. If this returns false, then
-   *         a read lock on the existing block will be held. If this returns true, a write lock on
-   *         the new block will be held.
+   * @return ttrue=成功创建新块并获得写锁，false=块已存在并获得读锁
    */
   def lockNewBlockForWriting(
       blockId: BlockId,

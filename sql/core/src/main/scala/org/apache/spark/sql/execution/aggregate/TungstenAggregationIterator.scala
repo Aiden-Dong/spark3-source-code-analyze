@@ -30,54 +30,40 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.KVIterator
 
 /**
- * An iterator used to evaluate aggregate functions. It operates on [[UnsafeRow]]s.
+ * 一个用于计算聚合函数的迭代器，操作 [[UnsafeRow]] 对象。.
  *
- * This iterator first uses hash-based aggregation to process input rows. It uses
- * a hash map to store groups and their corresponding aggregation buffers. If
- * this map cannot allocate memory from memory manager, it spills the map into disk
- * and creates a new one. After processed all the input, then merge all the spills
- * together using external sorter, and do sort-based aggregation.
+ * 该迭代器首先使用基于哈希的聚合来处理输入行。它使用哈希映射来存储分组及其对应的聚合缓冲区。
+ * 如果该映射无法从内存管理器分配内存，它会将映射溢出到磁盘并创建一个新的映射。
+ * 处理完所有输入后，使用外部排序器将所有溢出文件合并在一起，并执行基于排序的聚合。
  *
- * The process has the following step:
- *  - Step 0: Do hash-based aggregation.
- *  - Step 1: Sort all entries of the hash map based on values of grouping expressions and
- *            spill them to disk.
- *  - Step 2: Create an external sorter based on the spilled sorted map entries and reset the map.
- *  - Step 3: Get a sorted [[KVIterator]] from the external sorter.
- *  - Step 4: Repeat step 0 until no more input.
- *  - Step 5: Initialize sort-based aggregation on the sorted iterator.
- * Then, this iterator works in the way of sort-based aggregation.
+ * 处理过程包含以下步骤：
+ * • **步骤 0**: 执行基于哈希的聚合
+ * • **步骤 1**: 根据分组表达式的值对哈希映射的所有条目进行排序，并将它们溢出到磁盘
+ * • **步骤 2**: 基于溢出的已排序映射条目创建外部排序器，并重置映射
+ * • **步骤 3**: 从外部排序器获取已排序的 [[KVIterator]]
+ * • **步骤 4**: 重复步骤 0，直到没有更多输入
+ * • **步骤 5**: 在已排序的迭代器上初始化基于排序的聚合
  *
- * The code of this class is organized as follows:
- *  - Part 1: Initializing aggregate functions.
- *  - Part 2: Methods and fields used by setting aggregation buffer values,
- *            processing input rows from inputIter, and generating output
- *            rows.
- *  - Part 3: Methods and fields used by hash-based aggregation.
- *  - Part 4: Methods and fields used when we switch to sort-based aggregation.
- *  - Part 5: Methods and fields used by sort-based aggregation.
- *  - Part 6: Loads input and process input rows.
- *  - Part 7: Public methods of this iterator.
- *  - Part 8: A utility function used to generate a result when there is no
- *            input and there is no grouping expression.
+ * 然后，该迭代器以基于排序的聚合方式工作。
  *
- * @param partIndex
- *   index of the partition
- * @param groupingExpressions
- *   expressions for grouping keys
- * @param aggregateExpressions
- * [[AggregateExpression]] containing [[AggregateFunction]]s with mode [[Partial]],
- * [[PartialMerge]], or [[Final]].
- * @param aggregateAttributes the attributes of the aggregateExpressions'
- *   outputs when they are stored in the final aggregation buffer.
- * @param resultExpressions
- *   expressions for generating output rows.
- * @param newMutableProjection
- *   the function used to create mutable projections.
- * @param originalInputAttributes
- *   attributes of representing input rows from `inputIter`.
- * @param inputIter
- *   the iterator containing input [[UnsafeRow]]s.
+ * 该类的代码组织如下：
+ * • **第 1 部分**: 初始化聚合函数
+ * • **第 2 部分**: 用于设置聚合缓冲区值、处理来自 inputIter 的输入行以及生成输出行的方法和字段
+ * • **第 3 部分**: 基于哈希的聚合使用的方法和字段
+ * • **第 4 部分**: 当我们切换到基于排序的聚合时使用的方法和字段
+ * • **第 5 部分**: 基于排序的聚合使用的方法和字段
+ * • **第 6 部分**: 加载输入并处理输入行
+ * • **第 7 部分**: 该迭代器的公共方法
+ * • **第 8 部分**: 当没有输入且没有分组表达式时用于生成结果的实用函数
+ *
+ * @param partIndex 分区索引
+ * @param groupingExpressions  分组键的表达式
+ * @param aggregateExpressions 包含模式为 [[Partial]]、[[PartialMerge]] 或 [[Final]] 的 [[AggregateFunction]] 的 [[AggregateExpression]]
+ * @param aggregateAttributes 当聚合表达式的输出存储在最终聚合缓冲区中时的属性
+ * @param resultExpressions 用于生成输出行的表达式
+ * @param newMutableProjection 用于创建可变投影的函数.
+ * @param originalInputAttributes 表示来自 inputIter 的输入行的属性
+ * @param inputIter 包含输入 [[UnsafeRow]] 的迭代器.
  */
 class TungstenAggregationIterator(
     partIndex: Int,
@@ -119,9 +105,11 @@ class TungstenAggregationIterator(
   //         rows.
   ///////////////////////////////////////////////////////////////////////////
 
-  // Creates a new aggregation buffer and initializes buffer values.
-  // This function should be only called at most two times (when we create the hash map,
-  // and when we create the re-used buffer for sort-based aggregation).
+  // 创建一个新的聚合缓冲区并初始化缓冲区值。
+  // 此函数最多只能调用两次（创建哈希映射时和为基于排序的聚合创建重用缓冲区时）。
+  // • 创建空的聚合缓冲区模板
+  // • 初始化声明式聚合函数的缓冲区值
+  // • 初始化命令式聚合函数的缓冲区值
   private def createNewAggregationBuffer(): UnsafeRow = {
     val bufferSchema = aggregateFunctions.flatMap(_.aggBufferAttributes)
     val buffer: UnsafeRow = UnsafeProjection.create(bufferSchema.map(_.dataType))
@@ -133,7 +121,7 @@ class TungstenAggregationIterator(
     buffer
   }
 
-  // Creates a function used to generate output rows.
+  // 创建用于生成输出行的函数.
   override protected def generateResultProjection(): (UnsafeRow, InternalRow) => UnsafeRow = {
     val modes = aggregateExpressions.map(_.mode).distinct
     if (modes.nonEmpty && !modes.contains(Final) && !modes.contains(Complete)) {
@@ -172,15 +160,11 @@ class TungstenAggregationIterator(
     TaskContext.get().taskMemoryManager().pageSizeBytes
   )
 
-  // The function used to read and process input rows. When processing input rows,
-  // it first uses hash-based aggregation by putting groups and their buffers in
-  // hashMap. If there is not enough memory, it will multiple hash-maps, spilling
-  // after each becomes full then using sort to merge these spills, finally do sort
-  // based aggregation.
+  // 用于读取和处理输入行的函数。处理输入行时，首先使用基于哈希的聚合，将分组和缓冲区放入hashMap中。
+  // 如果内存不足，将使用多个哈希映射，每个满了就溢出，然后使用排序合并这些溢出，最后进行基于排序的聚合。
   private def processInputs(fallbackStartsAt: (Int, Int)): Unit = {
     if (groupingExpressions.isEmpty) {
-      // If there is no grouping expressions, we can just reuse the same buffer over and over again.
-      // Note that it would be better to eliminate the hash map entirely in the future.
+      // // 如果没有分组表达式，我们可以一遍又一遍地重用同一个缓冲区
       val groupingKey = groupingProjection.apply(null)
       val buffer: UnsafeRow = hashMap.getAggregationBufferFromUnsafeRow(groupingKey)
       while (inputIter.hasNext) {
@@ -191,17 +175,19 @@ class TungstenAggregationIterator(
       var i = 0
       while (inputIter.hasNext) {
         val newInput = inputIter.next()
-        val groupingKey = groupingProjection.apply(newInput)
+        val groupingKey = groupingProjection.apply(newInput)   // 获取当前数据的keyh
         var buffer: UnsafeRow = null
         if (i < fallbackStartsAt._2) {
           buffer = hashMap.getAggregationBufferFromUnsafeRow(groupingKey)
         }
-        if (buffer == null) {
+
+        if (buffer == null) {   // 内存不足时spill处理
           val sorter = hashMap.destructAndCreateExternalSorter()
+
           if (externalSorter == null) {
             externalSorter = sorter
           } else {
-            externalSorter.merge(sorter)
+            externalSorter.merge(sorter)  // 合并多个spill文件
           }
           i = 0
           buffer = hashMap.getAggregationBufferFromUnsafeRow(groupingKey)
@@ -212,6 +198,7 @@ class TungstenAggregationIterator(
             // scalastyle:on throwerror
           }
         }
+        // 将当前行的值累加到缓冲区
         processRow(buffer, newInput)
         i += 1
       }

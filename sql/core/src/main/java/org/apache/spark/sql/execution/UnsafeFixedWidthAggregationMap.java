@@ -39,8 +39,7 @@ import org.apache.spark.unsafe.map.BytesToBytesMap;
 public final class UnsafeFixedWidthAggregationMap {
 
   /**
-   * An empty aggregation buffer, encoded in UnsafeRow format. When inserting a new key into the
-   * map, we copy this buffer and use it as the value.
+   * 空聚合缓冲区模板
    */
   private final byte[] emptyAggregationBuffer;
 
@@ -49,17 +48,17 @@ public final class UnsafeFixedWidthAggregationMap {
   private final StructType groupingKeySchema;
 
   /**
-   * Encodes grouping keys as UnsafeRows.
+   * 分组键投影器.
    */
   private final UnsafeProjection groupingKeyProjection;
 
   /**
-   * A hashmap which maps from opaque bytearray keys to bytearray values.
+   * 底层哈希表
    */
   private final BytesToBytesMap map;
 
   /**
-   * Re-used pointer to the current aggregation buffer
+   * 当前聚合缓冲区指针
    */
   private final UnsafeRow currentAggregationBuffer;
 
