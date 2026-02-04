@@ -23,23 +23,22 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.MapStatus
 
 /**
- * The interface for customizing shuffle write process. The driver create a ShuffleWriteProcessor
- * and put it into [[ShuffleDependency]], and executors use it in each ShuffleMapTask.
+ * 用于自定义 shuffle 写入过程的接口。
+ * 驱动程序创建一个 ShuffleWriteProcessor 并将其放入 [[ShuffleDependency]] 中，执行器在每个 ShuffleMapTask 中使用它。
  */
 private[spark] class ShuffleWriteProcessor extends Serializable with Logging {
 
   /**
-   * Create a [[ShuffleWriteMetricsReporter]] from the task context. As the reporter is a
-   * per-row operator, here need a careful consideration on performance.
+   * 从任务上下文创建一个 [[ShuffleWriteMetricsReporter]]。
+   * 由于报告器是一个按行操作的算子，这里需要仔细考虑性能问题。
    */
   protected def createMetricsReporter(context: TaskContext): ShuffleWriteMetricsReporter = {
     context.taskMetrics().shuffleWriteMetrics
   }
 
   /**
-   * The write process for particular partition, it controls the life circle of [[ShuffleWriter]]
-   * get from [[ShuffleManager]] and triggers rdd compute, finally return the [[MapStatus]] for
-   * this task.
+   * 特定分区的写入过程，它控制从 [[ShuffleManager]] 获取的 [[ShuffleWriter]]的生命周期
+   * 触发 RDD 计算，最终返回此任务的 [[MapStatus]]。
    */
   def write(
       rdd: RDD[_],
@@ -49,29 +48,26 @@ private[spark] class ShuffleWriteProcessor extends Serializable with Logging {
       partition: Partition): MapStatus = {
     var writer: ShuffleWriter[Any, Any] = null
     try {
+      // 获取ShuffleManager
       val manager = SparkEnv.get.shuffleManager
-      writer = manager.getWriter[Any, Any](
-        dep.shuffleHandle,
-        mapId,
-        context,
-        createMetricsReporter(context))
-      writer.write(
-        rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]])
+      // 获取 ShuffleWriter
+      writer = manager.getWriter[Any, Any](dep.shuffleHandle, mapId, context, createMetricsReporter(context))
+      // ShuffleWriter 写出操作
+      writer.write(rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]])
       val mapStatus = writer.stop(success = true)
+
       if (mapStatus.isDefined) {
-        // Check if sufficient shuffle mergers are available now for the ShuffleMapTask to push
+        // 检查现在是否有足够的 shuffle 合并器可供 ShuffleMapTask 推送
         if (dep.shuffleMergeAllowed && dep.getMergerLocs.isEmpty) {
           val mapOutputTracker = SparkEnv.get.mapOutputTracker
-          val mergerLocs =
-            mapOutputTracker.getShufflePushMergerLocations(dep.shuffleId)
+          val mergerLocs = mapOutputTracker.getShufflePushMergerLocations(dep.shuffleId)
           if (mergerLocs.nonEmpty) {
             dep.setMergerLocs(mergerLocs)
           }
         }
-        // Initiate shuffle push process if push based shuffle is enabled
-        // The map task only takes care of converting the shuffle data file into multiple
-        // block push requests. It delegates pushing the blocks to a different thread-pool -
-        // ShuffleBlockPusher.BLOCK_PUSHER_POOL.
+        // 如果启用了基于推送的 shuffle，则启动 shuffle 推送过程
+        // Map 任务只负责将 shuffle 数据文件转换为多个块推送请求。
+        // 它将推送块的工作委托给不同的线程池 - ShuffleBlockPusher.BLOCK_PUSHER_POOL。
         if (!dep.shuffleMergeFinalized) {
           manager.shuffleBlockResolver match {
             case resolver: IndexShuffleBlockResolver =>

@@ -31,29 +31,26 @@ import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.util._
 
 /**
- * A unit of execution. We have two kinds of Task's in Spark:
+ * 一个执行单元。在 Spark 中我们有两种类型的任务：
  *
- *  - [[org.apache.spark.scheduler.ShuffleMapTask]]
- *  - [[org.apache.spark.scheduler.ResultTask]]
+ *  - [[org.apache.spark.scheduler.ShuffleMapTask]] Shuffle Map 任务
+ *  - [[org.apache.spark.scheduler.ResultTask]] 结果任务
  *
- * A Spark job consists of one or more stages. The very last stage in a job consists of multiple
- * ResultTasks, while earlier stages consist of ShuffleMapTasks. A ResultTask executes the task
- * and sends the task output back to the driver application. A ShuffleMapTask executes the task
- * and divides the task output to multiple buckets (based on the task's partitioner).
+ * 一个 Spark 作业由一个或多个阶段组成。作业的最后一个阶段由多个 ResultTask 组成，而早期的阶段由 ShuffleMapTask 组成。
+ * ResultTask 执行任务并将任务输出发送回驱动程序应用。
+ * ShuffleMapTask 执行任务并将任务输出分割到多个桶中（基于任务的分区器）。
  *
- * @param stageId id of the stage this task belongs to
- * @param stageAttemptId attempt id of the stage this task belongs to
- * @param partitionId index of the number in the RDD
- * @param localProperties copy of thread-local properties set by the user on the driver side.
- * @param serializedTaskMetrics a `TaskMetrics` that is created and serialized on the driver side
- *                              and sent to executor side.
+ * @param stageId 此任务所属阶段的 ID
+ * @param stageAttemptId 此任务所属阶段的尝试 ID
+ * @param partitionId RDD 中分区的索引号
+ * @param localProperties 用户在驱动端设置的线程本地属性的副本
+ * @param serializedTaskMetrics 在驱动端创建并序列化的 `TaskMetrics`，发送到执行器端
  *
- * The parameters below are optional:
- * @param jobId id of the job this task belongs to
- * @param appId id of the app this task belongs to
- * @param appAttemptId attempt id of the app this task belongs to
- * @param isBarrier whether this task belongs to a barrier stage. Spark must launch all the tasks
- *                  at the same time for a barrier stage.
+ * 以下参数是可选的：
+ * @param jobId 此任务所属作业的 ID
+ * @param appId 此任务所属应用的 ID
+ * @param appAttemptId 此任务所属应用的尝试 ID
+ * @param isBarrier 此任务是否属于屏障阶段。对于屏障阶段，Spark 必须同时启动所有任务
  */
 private[spark] abstract class Task[T](
     val stageId: Int,
@@ -72,12 +69,12 @@ private[spark] abstract class Task[T](
     SparkEnv.get.closureSerializer.newInstance().deserialize(ByteBuffer.wrap(serializedTaskMetrics))
 
   /**
-   * Called by [[org.apache.spark.executor.Executor]] to run this task.
+   * 由 [[org.apache.spark.executor.Executor]] 调用来运行此任务。
    *
-   * @param taskAttemptId an identifier for this task attempt that is unique within a SparkContext.
-   * @param attemptNumber how many times this task has been attempted (0 for the first attempt)
-   * @param resources other host resources (like gpus) that this task attempt can access
-   * @return the result of the task along with updates of Accumulators.
+   * @param taskAttemptId 在 SparkContext 内唯一的任务尝试标识符
+   * @param attemptNumber 此任务已尝试的次数（第一次尝试为 0）
+   * @param resources 此任务尝试可以访问的其他主机资源（如 GPU）
+   * @return 任务的结果以及累加器的更新
    */
   final def run(
       taskAttemptId: Long,
@@ -90,8 +87,7 @@ private[spark] abstract class Task[T](
     require(cpus > 0, "CPUs per task should be > 0")
 
     SparkEnv.get.blockManager.registerTask(taskAttemptId)
-    // TODO SPARK-24874 Allow create BarrierTaskContext based on partitions, instead of whether
-    // the stage is barrier.
+    // TODO SPARK-24874 允许基于分区创建 BarrierTaskContext，而不是基于阶段是否为屏障
     val taskContext = new TaskContextImpl(
       stageId,
       stageAttemptId, // stageAttemptId and stageAttemptNumber are semantically equal
@@ -136,7 +132,7 @@ private[spark] abstract class Task[T](
       runTask(context)
     } catch {
       case e: Throwable =>
-        // Catch all errors; run task failure callbacks, and rethrow the exception.
+        // 捕获所有错误；运行任务失败回调，并重新抛出异常
         try {
           context.markTaskFailed(e)
         } catch {
@@ -147,21 +143,18 @@ private[spark] abstract class Task[T](
         throw e
     } finally {
       try {
-        // Call the task completion callbacks. If "markTaskCompleted" is called twice, the second
-        // one is no-op.
+        // 调用任务完成回调。如果 "markTaskCompleted" 被调用两次，第二次是无操作的
         context.markTaskCompleted(None)
       } finally {
         try {
           Utils.tryLogNonFatalError {
-            // Release memory used by this thread for unrolling blocks
+            // 释放此线程用于展开块的内存
             SparkEnv.get.blockManager.memoryStore.releaseUnrollMemoryForThisTask(MemoryMode.ON_HEAP)
             SparkEnv.get.blockManager.memoryStore.releaseUnrollMemoryForThisTask(
               MemoryMode.OFF_HEAP)
-            // Notify any tasks waiting for execution memory to be freed to wake up and try to
-            // acquire memory again. This makes impossible the scenario where a task sleeps forever
-            // because there are no other tasks left to notify it. Since this is safe to do but may
-            // not be strictly necessary, we should revisit whether we can remove this in the
-            // future.
+            // 通知任何等待执行内存被释放的任务唤醒并尝试再次获取内存。
+            // 这使得任务永远睡眠的情况变得不可能，因为没有其他任务来通知它。
+            // 由于这样做是安全的但可能不是严格必要的，我们应该重新考虑是否可以在将来删除这个。
             val memoryManager = SparkEnv.get.memoryManager
             memoryManager.synchronized { memoryManager.notifyAll() }
           }
@@ -185,54 +178,51 @@ private[spark] abstract class Task[T](
 
   def preferredLocations: Seq[TaskLocation] = Nil
 
-  // Map output tracker epoch. Will be set by TaskSetManager.
+  // Map 输出跟踪器时期。将由 TaskSetManager 设置。
   var epoch: Long = -1
 
-  // Task context, to be initialized in run().
+  // 任务上下文，在 run() 中初始化。
   @transient var context: TaskContext = _
 
-  // The actual Thread on which the task is running, if any. Initialized in run().
+  // 任务运行的实际线程（如果有的话）。在 run() 中初始化。
   @volatile @transient private var taskThread: Thread = _
 
-  // If non-null, this task has been killed and the reason is as specified. This is used in case
-  // context is not yet initialized when kill() is invoked.
+  // 如果非空，此任务已被杀死，原因如指定。这在 kill() 被调用时上下文尚未初始化的情况下使用。
   @volatile @transient private var _reasonIfKilled: String = null
 
   protected var _executorDeserializeTimeNs: Long = 0
   protected var _executorDeserializeCpuTime: Long = 0
 
   /**
-   * If defined, this task has been killed and this option contains the reason.
+   * 如果已定义，此任务已被杀死，此选项包含原因。
    */
   def reasonIfKilled: Option[String] = Option(_reasonIfKilled)
 
   /**
-   * Returns the amount of time spent deserializing the RDD and function to be run.
+   * 返回反序列化 RDD 和要运行的函数所花费的时间量。
    */
   def executorDeserializeTimeNs: Long = _executorDeserializeTimeNs
   def executorDeserializeCpuTime: Long = _executorDeserializeCpuTime
 
   /**
-   * Collect the latest values of accumulators used in this task. If the task failed,
-   * filter out the accumulators whose values should not be included on failures.
+   * 收集此任务中使用的累加器的最新值。如果任务失败，过滤掉那些值不应包含在失败中的累加器。
    */
   def collectAccumulatorUpdates(taskFailed: Boolean = false): Seq[AccumulatorV2[_, _]] = {
     if (context != null) {
-      // Note: internal accumulators representing task metrics always count failed values
+      // 注意：表示任务指标的内部累加器总是计算失败值
       context.taskMetrics.nonZeroInternalAccums() ++
-        // zero value external accumulators may still be useful, e.g. SQLMetrics, we should not
-        // filter them out.
         context.taskMetrics.externalAccums.filter(a => !taskFailed || a.countFailedValues)
+      // 零值外部累加器可能仍然有用 ,例如 SQLMetrics，我们不应该过滤掉它们。
     } else {
       Seq.empty
     }
   }
 
+
   /**
-   * Kills a task by setting the interrupted flag to true. This relies on the upper level Spark
-   * code and user code to properly handle the flag. This function should be idempotent so it can
-   * be called multiple times.
-   * If interruptThread is true, we will also call Thread.interrupt() on the Task's executor thread.
+   * 通过将中断标志设置为 true 来杀死任务。这依赖于上层 Spark 代码和用户代码
+   * 正确处理该标志。此函数应该是幂等的，因此可以多次调用。
+   * 如果 interruptThread 为 true，我们还将在任务的执行器线程上调用 Thread.interrupt()。
    */
   def kill(interruptThread: Boolean, reason: String): Unit = {
     require(reason != null)

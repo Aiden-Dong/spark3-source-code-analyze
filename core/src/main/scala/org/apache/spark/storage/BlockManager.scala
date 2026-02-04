@@ -219,6 +219,7 @@ private[spark] class BlockManager(
   ////// ======================================== 网络和通信 =========================//
   private[spark] val externalShuffleServicePort = StorageUtils.externalShuffleServicePort(conf)
   private[spark] var shuffleServerId: BlockManagerId = _
+  // 块传输工具
   private[spark] val blockStoreClient = externalBlockStoreClient.getOrElse(blockTransferService)
 
   // Max number of failures before this block manager refreshes the block locations from the driver

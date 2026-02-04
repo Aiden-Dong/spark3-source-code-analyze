@@ -490,6 +490,8 @@ private[spark] class MapOutputTrackerMasterEndpoint(
 }
 
 /**
+ * 是 Spark 中负责**跟踪和管理 shuffle map 输出位置信息**的核心组件。
+ *
  * Class that keeps track of the location of the map output of a stage. This is abstract because the
  * driver and executor have different versions of the MapOutputTracker. In principle the driver-
  * and executor-side classes don't need to share a common base class; the current shared base class
@@ -546,17 +548,15 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
   }
 
   /**
-   * Called from executors to get the server URIs and output sizes for each shuffle block that
-   * needs to be read from a given range of map output partitions (startPartition is included but
-   * endPartition is excluded from the range) within a range of mappers (startMapIndex is included
-   * but endMapIndex is excluded) when push based shuffle is not enabled for the specific shuffle
-   * dependency. If endMapIndex=Int.MaxValue, the actual endMapIndex will be changed to the length
-   * of total map outputs.
+   * 从Executor调用，用于获取服务器 URI 和每个 shuffle block 的输出大小，
+   * 这些 shuffle block 需要从给定的 map 输出分区范围（包含 startPartition 但排除 endPartition）和 mapper 范围
+   * （包含 startMapIndex 但排除 endMapIndex）中读取，当特定 shuffle 依赖未启用基于推送的
+   * shuffle 时。如果 endMapIndex=Int.MaxValue，实际的 endMapIndex 将更改为总 map 输出的长度。
    *
-   * @return A sequence of 2-item tuples, where the first item in the tuple is a BlockManagerId,
-   *         and the second item is a sequence of (shuffle block id, shuffle block size, map index)
-   *         tuples describing the shuffle blocks that are stored at that block manager.
-   *         Note that zero-sized blocks are excluded in the result.
+   * @return 一个包含 2 项元组的序列，其中元组的第一项是 BlockManagerId，
+   *         第二项是描述存储在该 block manager 中的 shuffle block 的
+   *         (shuffle block id, shuffle block size, map index) 元组序列。
+   *         注意：结果中排除了零大小的 block。
    */
   def getMapSizesByExecutorId(
       shuffleId: Int,
