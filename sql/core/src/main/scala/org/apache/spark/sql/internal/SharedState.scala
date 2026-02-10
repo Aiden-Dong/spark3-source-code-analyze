@@ -41,33 +41,35 @@ import org.apache.spark.status.ElementTrackingStore
 import org.apache.spark.util.Utils
 
 /**
- * A class that holds all state shared across sessions in a given [[SQLContext]].
+ * 一个类，用于保存给定 [[SQLContext]] 中跨会话共享的所有状态。
  *
- * @param sparkContext The Spark context associated with this SharedState
- * @param initialConfigs The configs from the very first created SparkSession
+ * @param sparkContext 与此 SharedState 关联的 Spark 上下文
+ * @param initialConfigs 来自第一个创建的 SparkSession 的配置
  */
 private[sql] class SharedState(
-    val sparkContext: SparkContext,
+    val sparkContext: SparkContext,                         // Spark 操作上下文
     initialConfigs: scala.collection.Map[String, String])
   extends Logging {
 
   SharedState.setFsUrlStreamHandlerFactory(sparkContext.conf, sparkContext.hadoopConfiguration)
 
+
   private[sql] val (conf, hadoopConf) = {
+    // spark.sql.warehouse.dir
     val warehousePath = SharedState.resolveWarehousePath(
       sparkContext.conf, sparkContext.hadoopConfiguration, initialConfigs)
 
     val confClone = sparkContext.conf.clone()
     val hadoopConfClone = new Configuration(sparkContext.hadoopConfiguration)
-    // Extract entries from `SparkConf` and put them in the Hadoop conf.
+    // 从 `SparkConf` 中提取条目并将它们放入 Hadoop 配置中。
     confClone.getAll.foreach { case (k, v) =>
       if (v ne null) hadoopConfClone.set(k, v)
     }
-    // If `SparkSession` is instantiated using an existing `SparkContext` instance and no existing
-    // `SharedState`, all `SparkSession` level configurations have higher priority to generate a
-    // `SharedState` instance. This will be done only once then shared across `SparkSession`s
+    // 如果使用现有的 `SparkContext` 实例实例化 `SparkSession` 且没有现有的
+    // `SharedState`，则所有 `SparkSession` 级别的配置具有更高的优先级来生成
+    // `SharedState` 实例。这只会执行一次，然后在 `SparkSession` 之间共享
     initialConfigs.foreach {
-      // We have resolved the warehouse path and should not set warehouse conf here.
+      // 我们已经解析了仓库路径，不应该在这里设置仓库配置。
       case (k, _) if k == WAREHOUSE_PATH.key || k == SharedState.HIVE_WAREHOUSE_CONF_NAME =>
       case (k, v) if SQLConf.isStaticConfigKey(k) =>
         logDebug(s"Applying static initial session options to SparkConf: $k -> $v")
@@ -83,31 +85,28 @@ private[sql] class SharedState(
         logWarning("Cannot qualify the warehouse path, leaving it unqualified.", e)
         warehousePath
     }
-    // Set warehouse path in the SparkConf and Hadoop conf, so that it's application wide reachable
-    // from `SparkContext`.
+    // 在 SparkConf 和 Hadoop 配置中设置仓库路径，以便从 `SparkContext` 在应用程序范围内可访问。
     SharedState.setWarehousePathConf(sparkContext.conf, sparkContext.hadoopConfiguration, qualified)
     SharedState.setWarehousePathConf(confClone, hadoopConfClone, qualified)
     (confClone, hadoopConfClone)
   }
 
   /**
-   * Class for caching query results reused in future executions.
+   * 用于缓存在未来执行中重用的查询结果的类。
    */
   val cacheManager: CacheManager = new CacheManager
 
-  /** A global lock for all streaming query lifecycle tracking and management. */
+  /** 用于所有流查询生命周期跟踪和管理的全局锁。 */
   private[sql] val activeQueriesLock = new Object
 
   /**
-   * A map of active streaming queries to the session specific StreamingQueryManager that manages
-   * the lifecycle of that stream.
+   * 用于查询此 Spark 应用程序的 SQL 状态/指标的状态存储，基于 SQL 特定的 [[org.apache.spark.scheduler.SparkListenerEvent]]。
    */
   @GuardedBy("activeQueriesLock")
   private[sql] val activeStreamingQueries = new ConcurrentHashMap[UUID, StreamExecution]()
 
   /**
-   * A status store to query SQL status/metrics of this Spark application, based on SQL-specific
-   * [[org.apache.spark.scheduler.SparkListenerEvent]]s.
+   * 用于查询此 Spark 应用程序的 SQL 状态/指标的状态存储，基于 SQL 特定的 [[org.apache.spark.scheduler.SparkListenerEvent]]。
    */
   val statusStore: SQLAppStatusStore = {
     val kvStore = sparkContext.statusStore.store.asInstanceOf[ElementTrackingStore]
@@ -119,8 +118,7 @@ private[sql] class SharedState(
   }
 
   /**
-   * A [[StreamingQueryListener]] for structured streaming ui, it contains all streaming query ui
-   * data to show.
+   * 用于结构化流 UI 的 [[StreamingQueryListener]]，它包含要显示的所有流查询 UI 数据。
    */
   lazy val streamingQueryStatusListener: Option[StreamingQueryStatusListener] = {
     sparkContext.ui.flatMap { ui =>
@@ -135,35 +133,35 @@ private[sql] class SharedState(
   }
 
   /**
-   * A catalog that interacts with external systems.
+   * 获取  spark.sql.catalogImplementation ：  [hive, in-memory]
    */
   lazy val externalCatalog: ExternalCatalogWithListener = {
+    // spark.sql.catalogImplementation : [hive, in-memory]
     val externalCatalog = SharedState.reflect[ExternalCatalog, SparkConf, Configuration](
       SharedState.externalCatalogClassName(conf), conf, hadoopConf)
 
     val defaultDbDefinition = CatalogDatabase(
       SessionCatalog.DEFAULT_DATABASE,
       "default database",
-      CatalogUtils.stringToURI(conf.get(WAREHOUSE_PATH)),
+      CatalogUtils.stringToURI(conf.get(WAREHOUSE_PATH)),   // spark.sql.warehouse.dir
       Map())
-    // Create default database if it doesn't exist
+
+    // 判断 default database 是否存在
     if (!externalCatalog.databaseExists(SessionCatalog.DEFAULT_DATABASE)) {
-      // There may be another Spark application creating default database at the same time, here we
-      // set `ignoreIfExists = true` to avoid `DatabaseAlreadyExists` exception.
+      // 可能有另一个 Spark 应用程序同时创建默认数据库，这里我们设置 `ignoreIfExists = true` 以避免 `DatabaseAlreadyExists` 异常。
       externalCatalog.createDatabase(defaultDbDefinition, ignoreIfExists = true)
     }
-
-    // Wrap to provide catalog events
+    // 包装以提供目录事件
     val wrapped = new ExternalCatalogWithListener(externalCatalog)
 
-    // Make sure we propagate external catalog events to the spark listener bus
+    // 利用 ExternalCatalog 分装器，将
     wrapped.addListener((event: ExternalCatalogEvent) => sparkContext.listenerBus.post(event))
 
     wrapped
   }
 
   /**
-   * A manager for global temporary views.
+   * 全局临时视图的管理器。
    */
   lazy val globalTempViewManager: GlobalTempViewManager = {
     val globalTempDB = conf.get(GLOBAL_TEMP_DATABASE)
@@ -174,7 +172,7 @@ private[sql] class SharedState(
   }
 
   /**
-   * A classloader used to load all user-added jar.
+   * 用于加载所有用户添加的 jar 的类加载器。
    */
   val jarClassLoader = new NonClosableMutableURLClassLoader(
     org.apache.spark.util.Utils.getContextOrSparkClassLoader)
@@ -211,8 +209,7 @@ object SharedState extends Logging {
   }
 
   /**
-   * Helper method to create an instance of [[T]] using a single-arg constructor that
-   * accepts an [[Arg1]] and an [[Arg2]].
+   * 辅助方法，用于使用接受 [[Arg1]] 和 [[Arg2]] 的单参数构造函数创建 [[T]] 的实例。
    */
   private def reflect[T, Arg1 <: AnyRef, Arg2 <: AnyRef](
       className: String,
@@ -234,16 +231,15 @@ object SharedState extends Logging {
   private val HIVE_WAREHOUSE_CONF_NAME = "hive.metastore.warehouse.dir"
 
   /**
-   * Determine the warehouse path using the key `spark.sql.warehouse.dir` in the [[SparkConf]]
-   * or the initial options from the very first created SparkSession instance, and
-   * `hive.metastore.warehouse.dir` in hadoop [[Configuration]].
-   * The priority order is:
-   * s.s.w.d in initialConfigs
-   *   > s.s.w.d in spark conf (user specified)
-   *   > h.m.w.d in hadoop conf (user specified)
-   *   > s.s.w.d in spark conf (default)
+   * 使用 [[SparkConf]] 中的键 `spark.sql.warehouse.dir` 或来自第一个创建的 SparkSession 实例的初始选项，
+   * 以及 hadoop [[Configuration]] 中的 `hive.metastore.warehouse.dir` 来确定仓库路径。
+   * 优先级顺序为：
+   * initialConfigs 中的 s.s.w.d
+   *   > spark conf 中的 s.s.w.d（用户指定）
+   *   > hadoop conf 中的 h.m.w.d（用户指定）
+   *   > spark conf 中的 s.s.w.d（默认值）
    *
-   * @return the resolved warehouse path.
+   * @return 解析后的仓库路径。
    */
   def resolveWarehousePath(
       sparkConf: SparkConf,
@@ -255,21 +251,20 @@ object SharedState extends Logging {
       logWarning(s"Not allowing to set $HIVE_WAREHOUSE_CONF_NAME in SparkSession's " +
         s"options, please use ${WAREHOUSE_PATH.key} to set statically for cross-session usages")
     }
-    // hive.metastore.warehouse.dir only stay in hadoopConf
+    // hive.metastore.warehouse.dir 只保留在 hadoopConf 中
     sparkConf.remove(HIVE_WAREHOUSE_CONF_NAME)
-    // Set the Hive metastore warehouse path to the one we use
+    // 将 Hive 元数据仓库路径设置为我们使用的路径
     val hiveWarehouseDir = hadoopConf.get(HIVE_WAREHOUSE_CONF_NAME)
     if (hiveWarehouseDir != null && sparkWarehouseOption.isEmpty) {
-      // If hive.metastore.warehouse.dir is set and spark.sql.warehouse.dir is not set,
-      // we will respect the value of hive.metastore.warehouse.dir.
+      // 如果设置了 hive.metastore.warehouse.dir 但未设置 spark.sql.warehouse.dir，
+      // 我们将遵循 hive.metastore.warehouse.dir 的值。
       logInfo(s"${WAREHOUSE_PATH.key} is not set, but $HIVE_WAREHOUSE_CONF_NAME is set. " +
         s"Setting ${WAREHOUSE_PATH.key} to the value of $HIVE_WAREHOUSE_CONF_NAME.")
       hiveWarehouseDir
     } else {
-      // If spark.sql.warehouse.dir is set, we will override hive.metastore.warehouse.dir using
-      // the value of spark.sql.warehouse.dir.
-      // When neither spark.sql.warehouse.dir nor hive.metastore.warehouse.dir is set
-      // we will set hive.metastore.warehouse.dir to the default value of spark.sql.warehouse.dir.
+      // 如果设置了 spark.sql.warehouse.dir，我们将使用 spark.sql.warehouse.dir 的值覆盖 hive.metastore.warehouse.dir。
+      // 当 spark.sql.warehouse.dir 和 hive.metastore.warehouse.dir 都未设置时，
+      // 我们将把 hive.metastore.warehouse.dir 设置为 spark.sql.warehouse.dir 的默认值。
       val sparkWarehouseDir = sparkWarehouseOption.getOrElse(WAREHOUSE_PATH.defaultValueString)
       logInfo(s"Setting $HIVE_WAREHOUSE_CONF_NAME ('$hiveWarehouseDir') to the value of " +
         s"${WAREHOUSE_PATH.key}.")

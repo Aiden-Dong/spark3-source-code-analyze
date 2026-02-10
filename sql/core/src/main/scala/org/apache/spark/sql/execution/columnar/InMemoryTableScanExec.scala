@@ -28,9 +28,9 @@ import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
 case class InMemoryTableScanExec(
-    attributes: Seq[Attribute],
-    predicates: Seq[Expression],
-    @transient relation: InMemoryRelation)
+    attributes: Seq[Attribute],                // 输出属性
+    predicates: Seq[Expression],               // 谓词下推表达式
+    @transient relation: InMemoryRelation)     // 缓存计划树
   extends LeafExecNode {
 
   override lazy val metrics = Map(
@@ -52,15 +52,13 @@ case class InMemoryTableScanExec(
       predicates = predicates.map(QueryPlan.normalizeExpressions(_, relation.output)),
       relation = relation.canonicalized.asInstanceOf[InMemoryRelation])
 
+  // 向量化类型
   override def vectorTypes: Option[Seq[String]] =
     relation.cacheBuilder.serializer.vectorTypes(attributes, conf)
 
   override def supportsRowBased: Boolean = true
 
-  /**
-   * If true, get data from ColumnVector in ColumnarBatch, which are generally faster.
-   * If false, get data from UnsafeRow build from CachedBatch
-   */
+  // 判断是否支持列式计算
   override val supportsColumnar: Boolean = {
     conf.cacheVectorizedReaderEnabled  &&
         !WholeStageCodegenExec.isTooManyFields(conf, relation.schema) &&
@@ -87,13 +85,14 @@ case class InMemoryTableScanExec(
     }
 
     val numOutputRows = longMetric("numOutputRows")
-    // Using these variables here to avoid serialization of entire objects (if referenced
-    // directly) within the map Partitions closure.
+
     val relOutput = relation.output
+
+    // 数据序列化存储器  -
     val serializer = relation.cacheBuilder.serializer
 
     // update SQL metrics
-    val withMetrics =
+    val withMetrics : RDD[CachedBatch] =
       filteredCachedBatches().mapPartitionsInternal { iter =>
         if (enableAccumulatorsForTest && iter.hasNext) {
           readPartitions.add(1)
@@ -106,6 +105,8 @@ case class InMemoryTableScanExec(
           batch
         }
       }
+
+    // RDD[CacheBatch] -> RDD[InternalRow]
     serializer.convertCachedBatchToInternalRow(withMetrics, relOutput, attributes, conf)
   }
 
@@ -120,8 +121,7 @@ case class InMemoryTableScanExec(
     }
   }
 
-  // The cached version does not change the outputPartitioning of the original SparkPlan.
-  // But the cached version could alias output, so we need to replace output.
+  // 指定数据的分区样式
   override def outputPartitioning: Partitioning = {
     relation.cachedPlan.outputPartitioning match {
       case e: Expression => updateAttribute(e).asInstanceOf[Partitioning]
@@ -129,8 +129,7 @@ case class InMemoryTableScanExec(
     }
   }
 
-  // The cached version does not change the outputOrdering of the original SparkPlan.
-  // But the cached version could alias output, so we need to replace output.
+  // 指定数据的排序模式
   override def outputOrdering: Seq[SortOrder] =
     relation.cachedPlan.outputOrdering.map(updateAttribute(_).asInstanceOf[SortOrder])
 
@@ -143,6 +142,7 @@ case class InMemoryTableScanExec(
   private val inMemoryPartitionPruningEnabled = conf.inMemoryPartitionPruning
 
   private def filteredCachedBatches(): RDD[CachedBatch] = {
+    // RDD[CachedBatch]
     val buffers = relation.cacheBuilder.cachedColumnBuffers
 
     if (inMemoryPartitionPruningEnabled) {

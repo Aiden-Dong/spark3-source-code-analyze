@@ -71,48 +71,54 @@ class DefaultCachedBatchSerializer extends SimpleMetricsCachedBatchSerializer {
   }
 
   def convertForCacheInternal(
-      input: RDD[InternalRow],
-      output: Seq[Attribute],
-      batchSize: Int,
-      useCompression: Boolean): RDD[CachedBatch] = {
+      input: RDD[InternalRow],              // 上游输入RDD
+      output: Seq[Attribute],               // 输出属性
+      batchSize: Int,                       // 批次大小   spark.sql.inMemoryColumnarStorage.batchSize
+      useCompression: Boolean): RDD[CachedBatch] = {      // 是否开启压缩
+
     input.mapPartitionsInternal { rowIterator =>
+
       new Iterator[DefaultCachedBatch] {
         def next(): DefaultCachedBatch = {
+
+          // 使用 Columnar -> ColumnBuilder
           val columnBuilders = output.map { attribute =>
             ColumnBuilder(attribute.dataType, batchSize, attribute.name, useCompression)
           }.toArray
 
           var rowCount = 0
           var totalSize = 0L
+
+          // 插入一个batch 批次大小
           while (rowIterator.hasNext && rowCount < batchSize
               && totalSize < ColumnBuilder.MAX_BATCH_SIZE_IN_BYTE) {
+
+            // 提取一行数据
             val row = rowIterator.next()
 
-            // Added for SPARK-6082. This assertion can be useful for scenarios when something
-            // like Hive TRANSFORM is used. The external data generation script used in TRANSFORM
-            // may result malformed rows, causing ArrayIndexOutOfBoundsException, which is somewhat
-            // hard to decipher.
-            assert(
-              row.numFields == columnBuilders.length,
-              s"Row column number mismatch, expected ${output.size} columns, " +
-                  s"but got ${row.numFields}." +
-                  s"\nRow content: $row")
+            assert(row.numFields == columnBuilders.length,
+              s"Row column number mismatch, expected ${output.size} columns, but got ${row.numFields}. Row content: $row")
 
             var i = 0
             totalSize = 0
             while (i < row.numFields) {
-              columnBuilders(i).appendFrom(row, i)
-              totalSize += columnBuilders(i).columnStats.sizeInBytes
+              columnBuilders(i).appendFrom(row, i)                       // 将当前行对应列数据放置到 Columnar 中
+              totalSize += columnBuilders(i).columnStats.sizeInBytes     // 记录当前列的数据大小
               i += 1
             }
             rowCount += 1
           }
 
-          val stats = InternalRow.fromSeq(
-            columnBuilders.flatMap(_.columnStats.collectedStatistics).toSeq)
-          DefaultCachedBatch(rowCount, columnBuilders.map { builder =>
-            JavaUtils.bufferToArray(builder.build())
-          }, stats)
+          // 获取每一列的状态信息
+          val stats = InternalRow.fromSeq(columnBuilders.flatMap(_.columnStats.collectedStatistics).toSeq)
+
+          DefaultCachedBatch(
+            rowCount,
+            columnBuilders.map { builder =>
+              JavaUtils.bufferToArray(builder.build())
+            },       // 构建列式存储
+            stats
+          )
         }
 
         def hasNext: Boolean = rowIterator.hasNext
@@ -201,17 +207,18 @@ class DefaultCachedBatchSerializer extends SimpleMetricsCachedBatchSerializer {
 
 private[sql]
 case class CachedRDDBuilder(
-    serializer: CachedBatchSerializer,
-    storageLevel: StorageLevel,
-    @transient cachedPlan: SparkPlan,
-    tableName: Option[String]) {
+    serializer: CachedBatchSerializer,   // 序列化器
+    storageLevel: StorageLevel,          // 缓存级别
+    @transient cachedPlan: SparkPlan,    // 当前缓存的查询计划树
+    tableName: Option[String]) {         // 当前缓存明明
 
   @transient @volatile private var _cachedColumnBuffers: RDD[CachedBatch] = null
   @transient @volatile private var _cachedColumnBuffersAreLoaded: Boolean = false
 
-  val sizeInBytesStats: LongAccumulator = cachedPlan.session.sparkContext.longAccumulator
-  val rowCountStats: LongAccumulator = cachedPlan.session.sparkContext.longAccumulator
+  val sizeInBytesStats: LongAccumulator = cachedPlan.session.sparkContext.longAccumulator  // 字节数据量统计
+  val rowCountStats: LongAccumulator = cachedPlan.session.sparkContext.longAccumulator     // 数据行数统计
 
+  // 当前缓存名称
   val cachedName = tableName.map(n => s"In-memory table $n")
     .getOrElse(StringUtils.abbreviate(cachedPlan.toString, 1024))
 
@@ -275,11 +282,13 @@ case class CachedRDDBuilder(
         storageLevel,
         cachedPlan.conf)
     }
+
     val cached = cb.map { batch =>
       sizeInBytesStats.add(batch.sizeInBytes)
       rowCountStats.add(batch.numRows)
       batch
-    }.persist(storageLevel)
+    }.persist(storageLevel)   // 数据存储缓存
+
     cached.setName(cachedName)
     cached
   }
@@ -315,16 +324,21 @@ object InMemoryRelation {
   }
 
   def apply(
-      storageLevel: StorageLevel,
-      qe: QueryExecution,
-      tableName: Option[String]): InMemoryRelation = {
-    val optimizedPlan = qe.optimizedPlan
-    val serializer = getSerializer(optimizedPlan.conf)
-    val child = if (serializer.supportsColumnarInput(optimizedPlan.output)) {
-      convertToColumnarIfPossible(qe.executedPlan)
+      storageLevel: StorageLevel,                        // 存储级别
+      qe: QueryExecution,                                // 当前的 catalyst 执行包装器
+      tableName: Option[String]): InMemoryRelation = {   // 当前LogicalPlan 的缓存名称
+
+    val optimizedPlan = qe.optimizedPlan                                        //  获取对应的优化树 - command类型会立即触发执行
+    // CachedBatchSerializer
+    val serializer = getSerializer(optimizedPlan.conf)                          // 获取序列化器 spark.sql.cache.serializer
+
+    // 获取该计划的物理树
+    val child = if (serializer.supportsColumnarInput(optimizedPlan.output)) {   // 判断是否支持列式读取
+      convertToColumnarIfPossible(qe.executedPlan)                              //
     } else {
       qe.executedPlan
     }
+
     val cacheBuilder = CachedRDDBuilder(serializer, storageLevel, child, tableName)
     val relation = new InMemoryRelation(child.output, cacheBuilder, optimizedPlan.outputOrdering)
     relation.statsOfPlanToCache = optimizedPlan.stats
@@ -371,10 +385,10 @@ object InMemoryRelation {
 }
 
 case class InMemoryRelation(
-    output: Seq[Attribute],
-    @transient cacheBuilder: CachedRDDBuilder,
-    override val outputOrdering: Seq[SortOrder])
-  extends logical.LeafNode with MultiInstanceRelation {
+    output: Seq[Attribute],                              // 输出属性
+    @transient cacheBuilder: CachedRDDBuilder,           // 当前CacheRDD 的构建工具
+    override val outputOrdering: Seq[SortOrder])         // 指定是否要保持排序的列
+  extends logical.LeafNode with MultiInstanceRelation {  // 叶子结点
 
   @volatile var statsOfPlanToCache: Statistics = null
 

@@ -539,34 +539,25 @@ object ScalaReflection extends ScalaReflection {
       case t if isSubtype(t, localTypeOf[java.time.Duration]) =>
         createSerializerForJavaDuration(inputObject)
 
-      case t if isSubtype(t, localTypeOf[java.time.Period]) =>
-        createSerializerForJavaPeriod(inputObject)
+      case t if isSubtype(t, localTypeOf[java.time.Period]) => createSerializerForJavaPeriod(inputObject)
 
-      case t if isSubtype(t, localTypeOf[BigDecimal]) =>
-        createSerializerForScalaBigDecimal(inputObject)
+      case t if isSubtype(t, localTypeOf[BigDecimal]) => createSerializerForScalaBigDecimal(inputObject)
 
-      case t if isSubtype(t, localTypeOf[java.math.BigDecimal]) =>
-        createSerializerForJavaBigDecimal(inputObject)
+      case t if isSubtype(t, localTypeOf[java.math.BigDecimal]) => createSerializerForJavaBigDecimal(inputObject)
 
-      case t if isSubtype(t, localTypeOf[java.math.BigInteger]) =>
-        createSerializerForJavaBigInteger(inputObject)
+      case t if isSubtype(t, localTypeOf[java.math.BigInteger]) => createSerializerForJavaBigInteger(inputObject)
 
-      case t if isSubtype(t, localTypeOf[java.lang.Enum[_]]) =>
-        createSerializerForJavaEnum(inputObject)
+      case t if isSubtype(t, localTypeOf[java.lang.Enum[_]]) => createSerializerForJavaEnum(inputObject)
 
-      case t if isSubtype(t, localTypeOf[scala.math.BigInt]) =>
-        createSerializerForScalaBigInt(inputObject)
+      case t if isSubtype(t, localTypeOf[scala.math.BigInt]) => createSerializerForScalaBigInt(inputObject)
 
-      case t if isSubtype(t, localTypeOf[java.lang.Integer]) =>
-        createSerializerForInteger(inputObject)
+      case t if isSubtype(t, localTypeOf[java.lang.Integer]) => createSerializerForInteger(inputObject)
       case t if isSubtype(t, localTypeOf[java.lang.Long]) => createSerializerForLong(inputObject)
-      case t if isSubtype(t, localTypeOf[java.lang.Double]) =>
-        createSerializerForDouble(inputObject)
+      case t if isSubtype(t, localTypeOf[java.lang.Double]) => createSerializerForDouble(inputObject)
       case t if isSubtype(t, localTypeOf[java.lang.Float]) => createSerializerForFloat(inputObject)
       case t if isSubtype(t, localTypeOf[java.lang.Short]) => createSerializerForShort(inputObject)
       case t if isSubtype(t, localTypeOf[java.lang.Byte]) => createSerializerForByte(inputObject)
-      case t if isSubtype(t, localTypeOf[java.lang.Boolean]) =>
-        createSerializerForBoolean(inputObject)
+      case t if isSubtype(t, localTypeOf[java.lang.Boolean]) => createSerializerForBoolean(inputObject)
 
       case t if t.typeSymbol.annotations.exists(_.tree.tpe =:= typeOf[SQLUserDefinedType]) =>
         val udt = getClassFromType(t)

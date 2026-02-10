@@ -37,53 +37,50 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK
 
-/** Holds a cached logical plan and its data */
+/** 保存缓存的逻辑计划及其数据 */
 case class CachedData(plan: LogicalPlan, cachedRepresentation: InMemoryRelation)
 
 /**
- * Provides support in a SQLContext for caching query results and automatically using these cached
- * results when subsequent queries are executed.  Data is cached using byte buffers stored in an
- * InMemoryRelation.  This relation is automatically substituted query plans that return the
- * `sameResult` as the originally cached query.
+ * 在 SQLContext 中提供缓存查询结果的支持，并在执行后续查询时自动使用这些缓存结果。
+ * 数据使用存储在 InMemoryRelation 中的字节缓冲区进行缓存。 此关系会自动替换返回与原始缓存查询 `sameResult` 的查询计划。
  *
- * Internal to Spark SQL.
+ * Spark SQL 内部使用。
  */
 class CacheManager extends Logging with AdaptiveSparkPlanHelper {
 
   /**
-   * Maintains the list of cached plans as an immutable sequence.  Any updates to the list
-   * should be protected in a "this.synchronized" block which includes the reading of the
-   * existing value and the update of the cachedData var.
+   * 将缓存计划列表维护为不可变序列。
+   * 对列表的任何更新 都应在 "this.synchronized" 块中受到保护，该块包括读取
+   * 现有值和更新 cachedData 变量。
    */
   @transient @volatile
   private var cachedData = IndexedSeq[CachedData]()
 
   /**
-   * Configurations needs to be turned off, to avoid regression for cached query, so that the
-   * outputPartitioning of the underlying cached query plan can be leveraged later.
-   * Configurations include:
+   * 需要关闭的配置，以避免缓存查询的回归，
+   * 以便稍后可以利用 底层缓存查询计划的 outputPartitioning。
+   * 配置包括：
    * 1. AQE
-   * 2. Automatic bucketed table scan
+   * 2. 自动分桶表扫描
    */
   private val forceDisableConfigs: Seq[ConfigEntry[Boolean]] = Seq(
     SQLConf.ADAPTIVE_EXECUTION_ENABLED,
     SQLConf.AUTO_BUCKETED_SCAN_ENABLED)
 
-  /** Clears all cached tables. */
+  /** 清除所有缓存的表。 */
   def clearCache(): Unit = this.synchronized {
     cachedData.foreach(_.cachedRepresentation.cacheBuilder.clearCache())
     cachedData = IndexedSeq[CachedData]()
   }
 
-  /** Checks if the cache is empty. */
+  /** 检查缓存是否为空。 */
   def isEmpty: Boolean = {
     cachedData.isEmpty
   }
 
   /**
-   * Caches the data produced by the logical representation of the given [[Dataset]].
-   * Unlike `RDD.cache()`, the default storage level is set to be `MEMORY_AND_DISK` because
-   * recomputing the in-memory columnar representation of the underlying table is expensive.
+   * 缓存给定 [[Dataset]] 的逻辑表示产生的数据。
+   * 与 `RDD.cache()` 不同，默认存储级别设置为 `MEMORY_AND_DISK`，因为重新计算底层表的内存列式表示的成本很高。
    */
   def cacheQuery(
       query: Dataset[_],
@@ -93,9 +90,9 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
   }
 
   /**
-   * Caches the data produced by the given [[LogicalPlan]].
-   * Unlike `RDD.cache()`, the default storage level is set to be `MEMORY_AND_DISK` because
-   * recomputing the in-memory columnar representation of the underlying table is expensive.
+   * 缓存给定 [[LogicalPlan]] 产生的数据。
+   * 与 `RDD.cache()` 不同，默认存储级别设置为 `MEMORY_AND_DISK`，因为
+   * 重新计算底层表的内存列式表示的成本很高。
    */
   def cacheQuery(
       spark: SparkSession,
@@ -105,17 +102,20 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
   }
 
   /**
-   * Caches the data produced by the given [[LogicalPlan]].
+   * 缓存给定 [[LogicalPlan]] 产生的数据。
    */
   def cacheQuery(
-      spark: SparkSession,
-      planToCache: LogicalPlan,
-      tableName: Option[String],
-      storageLevel: StorageLevel): Unit = {
+      spark: SparkSession,              // Spark 会话空间
+      planToCache: LogicalPlan,         // 要缓存的 LogicalPlan
+      tableName: Option[String],        // 当前缓存数据命名
+      storageLevel: StorageLevel): Unit = {  // 要缓存的级别
     if (lookupCachedData(planToCache).nonEmpty) {
       logWarning("Asked to cache already cached data.")
     } else {
+      // 设置缓存LogicalPlan 的指定 SparkSession(spark.clone(conf))
       val sessionWithConfigsOff = getOrCloneSessionWithConfigsOff(spark)
+
+      // 创建 InmemoryRelation
       val inMemoryRelation = sessionWithConfigsOff.withActive {
         val qe = sessionWithConfigsOff.sessionState.executePlan(planToCache)
         InMemoryRelation(
@@ -128,6 +128,7 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
         if (lookupCachedData(planToCache).nonEmpty) {
           logWarning("Data has already been cached.")
         } else {
+          // 将当前的InmemoryRelation 添加到缓存管理
           cachedData = CachedData(planToCache, inMemoryRelation) +: cachedData
         }
       }
@@ -135,10 +136,9 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
   }
 
   /**
-   * Un-cache the given plan or all the cache entries that refer to the given plan.
-   * @param query     The [[Dataset]] to be un-cached.
-   * @param cascade   If true, un-cache all the cache entries that refer to the given
-   *                  [[Dataset]]; otherwise un-cache the given [[Dataset]] only.
+   * 取消缓存给定计划或引用给定计划的所有缓存条目。
+   * @param query     要取消缓存的 [[Dataset]]。
+   * @param cascade   如果为 true，取消缓存引用给定 [[Dataset]] 的所有缓存条目；否则仅取消缓存给定的 [[Dataset]]。
    */
   def uncacheQuery(
       query: Dataset[_],
@@ -147,12 +147,11 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
   }
 
   /**
-   * Un-cache the given plan or all the cache entries that refer to the given plan.
-   * @param spark     The Spark session.
-   * @param plan      The plan to be un-cached.
-   * @param cascade   If true, un-cache all the cache entries that refer to the given
-   *                  plan; otherwise un-cache the given plan only.
-   * @param blocking  Whether to block until all blocks are deleted.
+   * 取消缓存给定计划或引用给定计划的所有缓存条目。
+   * @param spark     Spark 会话。
+   * @param plan      要取消缓存的计划。
+   * @param cascade   如果为 true，取消缓存引用给定计划的所有缓存条目；否则仅取消缓存给定的计划。
+   * @param blocking  是否阻塞直到所有块被删除。
    */
   def uncacheQuery(
       spark: SparkSession,
@@ -171,28 +170,23 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
     }
     plansToUncache.foreach { _.cachedRepresentation.cacheBuilder.clearCache(blocking) }
 
-    // Re-compile dependent cached queries after removing the cached query.
+    // 删除缓存查询后重新编译依赖的缓存查询。
     if (!cascade) {
       recacheByCondition(spark, cd => {
-        // If the cache buffer has already been loaded, we don't need to recompile the cached plan,
-        // as it does not rely on the plan that has been uncached anymore, it will just produce
-        // data from the cache buffer.
-        // Note that the `CachedRDDBuilder.isCachedColumnBuffersLoaded` call is a non-locking
-        // status test and may not return the most accurate cache buffer state. So the worse case
-        // scenario can be:
-        // 1) The buffer has been loaded, but `isCachedColumnBuffersLoaded` returns false, then we
-        //    will clear the buffer and re-compiled the plan. It is inefficient but doesn't affect
-        //    correctness.
-        // 2) The buffer has been cleared, but `isCachedColumnBuffersLoaded` returns true, then we
-        //    will keep it as it is. It means the physical plan has been re-compiled already in the
-        //    other thread.
+        // 如果缓存缓冲区已经加载，我们不需要重新编译缓存计划，
+        // 因为它不再依赖已取消缓存的计划，它只会从缓存缓冲区生成数据。
+        // 请注意，`CachedRDDBuilder.isCachedColumnBuffersLoaded` 调用是非阻塞的状态测试，可能不会返回最准确的缓存缓冲区状态。因此最坏的情况可能是：
+        // 1) 缓冲区已加载，但 `isCachedColumnBuffersLoaded` 返回 false，那么我们
+        //    将清除缓冲区并重新编译计划。这是低效的，但不影响正确性。
+        // 2) 缓冲区已清除，但 `isCachedColumnBuffersLoaded` 返回 true，那么我们
+        //    将保持原样。这意味着物理计划已经在其他线程中重新编译了。
         val cacheAlreadyLoaded = cd.cachedRepresentation.cacheBuilder.isCachedColumnBuffersLoaded
         cd.plan.exists(_.sameResult(plan)) && !cacheAlreadyLoaded
       })
     }
   }
 
-  // Analyzes column statistics in the given cache data
+  // 分析给定缓存数据中的列统计信息
   private[sql] def analyzeColumnCacheQuery(
       sparkSession: SparkSession,
       cachedData: CachedData,
@@ -204,26 +198,29 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
   }
 
   /**
-   * Tries to re-cache all the cache entries that refer to the given plan.
+   * 尝试重新缓存引用给定计划的所有缓存条目。
    */
   def recacheByPlan(spark: SparkSession, plan: LogicalPlan): Unit = {
     recacheByCondition(spark, _.plan.exists(_.sameResult(plan)))
   }
 
   /**
-   *  Re-caches all the cache entries that satisfies the given `condition`.
+   *  重新缓存满足给定 `condition` 的所有缓存条目。
    */
   private def recacheByCondition(
       spark: SparkSession,
       condition: CachedData => Boolean): Unit = {
     val needToRecache = cachedData.filter(condition)
+
     this.synchronized {
-      // Remove the cache entry before creating a new ones.
+      // 先把要重新缓存的LogicalPlan 踢出去。
       cachedData = cachedData.filterNot(cd => needToRecache.exists(_ eq cd))
     }
     needToRecache.foreach { cd =>
+      // 清理当前的缓存
       cd.cachedRepresentation.cacheBuilder.clearCache()
       val sessionWithConfigsOff = getOrCloneSessionWithConfigsOff(spark)
+      // 重新构建 InMemoryRelation
       val newCache = sessionWithConfigsOff.withActive {
         val qe = sessionWithConfigsOff.sessionState.executePlan(cd.plan)
         InMemoryRelation(cd.cachedRepresentation.cacheBuilder, qe)
@@ -239,12 +236,12 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
     }
   }
 
-  /** Optionally returns cached data for the given [[Dataset]] */
+  /** 可选地返回给定 [[Dataset]] 的缓存数据 */
   def lookupCachedData(query: Dataset[_]): Option[CachedData] = {
     lookupCachedData(query.logicalPlan)
   }
 
-  /** Optionally returns cached data for the given [[LogicalPlan]]. */
+  /** 可选地返回给定 [[LogicalPlan]] 的缓存数据。 */
   def lookupCachedData(plan: LogicalPlan): Option[CachedData] = {
     cachedData.find(cd => plan.sameResult(cd.plan))
   }
@@ -273,8 +270,7 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
   }
 
   /**
-   * Tries to re-cache all the cache entries that contain `resourcePath` in one or more
-   * `HadoopFsRelation` node(s) as part of its logical plan.
+   * 尝试重新缓存在其逻辑计划中包含一个或多个 `HadoopFsRelation` 节点中的 `resourcePath` 的所有缓存条目。
    */
   def recacheByPath(spark: SparkSession, resourcePath: String): Unit = {
     val path = new Path(resourcePath)
@@ -283,8 +279,7 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
   }
 
   /**
-   * Tries to re-cache all the cache entries that contain `resourcePath` in one or more
-   * `HadoopFsRelation` node(s) as part of its logical plan.
+   * 尝试重新缓存在其逻辑计划中包含一个或多个 `HadoopFsRelation` 节点中的 `resourcePath` 的所有缓存条目。
    */
   def recacheByPath(spark: SparkSession, resourcePath: Path, fs: FileSystem): Unit = {
     val qualifiedPath = fs.makeQualified(resourcePath)
@@ -292,10 +287,8 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
   }
 
   /**
-   * Traverses a given `plan` and searches for the occurrences of `qualifiedPath` in the
-   * [[org.apache.spark.sql.execution.datasources.FileIndex]] of any [[HadoopFsRelation]] nodes
-   * in the plan. If found, we refresh the metadata and return true. Otherwise, this method returns
-   * false.
+   * 遍历给定的 `plan` 并在计划中任何 [[HadoopFsRelation]] 节点的[[org.apache.spark.sql.execution.datasources.FileIndex]] 中搜索 `qualifiedPath` 的出现。
+   * 如果找到，我们刷新元数据并返回 true。否则，此方法返回 false。
    */
   private def lookupAndRefresh(plan: LogicalPlan, fs: FileSystem, qualifiedPath: Path): Boolean = {
     plan match {
@@ -313,8 +306,8 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
   }
 
   /**
-   * Refresh the given [[FileIndex]] if any of its root paths starts with `qualifiedPath`.
-   * @return whether the [[FileIndex]] is refreshed.
+   * 如果给定 [[FileIndex]] 的任何根路径以 `qualifiedPath` 开头，则刷新它。
+   * @return [[FileIndex]] 是否被刷新。
    */
   private def refreshFileIndexIfNecessary(
       fileIndex: FileIndex,
@@ -329,7 +322,7 @@ class CacheManager extends Logging with AdaptiveSparkPlanHelper {
   }
 
   /**
-   * If CAN_CHANGE_CACHED_PLAN_OUTPUT_PARTITIONING is enabled, just return original session.
+   * 如果启用了 CAN_CHANGE_CACHED_PLAN_OUTPUT_PARTITIONING，则只返回原始会话。
    */
   private def getOrCloneSessionWithConfigsOff(session: SparkSession): SparkSession = {
     if (session.sessionState.conf.getConf(SQLConf.CAN_CHANGE_CACHED_PLAN_OUTPUT_PARTITIONING)) {

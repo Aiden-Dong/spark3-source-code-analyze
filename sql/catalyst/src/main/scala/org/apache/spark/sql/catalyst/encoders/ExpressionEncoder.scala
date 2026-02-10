@@ -35,15 +35,11 @@ import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 
 /**
- * A factory for constructing encoders that convert objects and primitives to and from the
- * internal row format using catalyst expressions and code generation.  By default, the
- * expressions used to retrieve values from an input row when producing an object will be created as
- * follows:
- *  - Classes will have their sub fields extracted by name using [[UnresolvedAttribute]] expressions
- *    and [[UnresolvedExtractValue]] expressions.
- *  - Tuples will have their subfields extracted by position using [[BoundReference]] expressions.
- *  - Primitives will have their values extracted from the first ordinal with a schema that defaults
- *    to the name `value`.
+ * 用于构造编码器的工厂类，这些Encoder使用 Catalyst 表达式和Codegen将对象和基本类型与内部行格式相互转换。
+ * 默认情况下，从输入行中检索值以生成对象时使用的表达式将按以下方式创建：
+ *  - 类将使用 [[UnresolvedAttribute]] 表达式和 [[UnresolvedExtractValue]] 表达式按名称提取其子字段。
+ *  - 元组将使用 [[BoundReference]] 表达式按位置提取其子字段。
+ *  - 基本类型将从第一个序号中提取其值，默认 schema 的名称为 `value`。
  */
 object ExpressionEncoder {
 
@@ -61,7 +57,7 @@ object ExpressionEncoder {
       ClassTag[T](cls))
   }
 
-  // TODO: improve error message for java bean encoder.
+  // TODO: 改进 Java Bean 编码器的错误消息。
   def javaBean[T](beanClass: Class[T]): ExpressionEncoder[T] = {
     val schema = JavaTypeInference.inferDataType(beanClass)._1
     assert(schema.isInstanceOf[StructType])
@@ -76,9 +72,8 @@ object ExpressionEncoder {
   }
 
   /**
-   * Given a set of N encoders, constructs a new encoder that produce objects as items in an
-   * N-tuple.  Note that these encoders should be unresolved so that information about
-   * name/positional binding is preserved.
+   * 给定一组 N 个编码器，构造一个新的编码器，该编码器将对象作为 N 元组中的项生成。
+   * 注意，这些编码器应该是[未解析]的，以便保留有关名称/位置绑定的信息。
    */
   def tuple(encoders: Seq[ExpressionEncoder[_]]): ExpressionEncoder[_] = {
     if (encoders.length > 22) {
@@ -133,7 +128,6 @@ object ExpressionEncoder {
       ClassTag(cls))
   }
 
-  // Tuple1
   def tuple[T](e: ExpressionEncoder[T]): ExpressionEncoder[Tuple1[T]] =
     tuple(Seq(e)).asInstanceOf[ExpressionEncoder[Tuple1[T]]]
 
@@ -166,8 +160,7 @@ object ExpressionEncoder {
   private val anyObjectType = ObjectType(classOf[Any])
 
   /**
-   * Function that deserializes an [[InternalRow]] into an object of type `T`. This class is not
-   * thread-safe.
+   * 将 [[InternalRow]] 反序列化为类型 `T` 的对象的函数。此类不是线程安全的。
    */
   class Deserializer[T](private val expressions: Seq[Expression])
     extends (InternalRow => T) with Serializable {
@@ -186,25 +179,25 @@ object ExpressionEncoder {
   }
 
   /**
-   * Function that serializes an object of type `T` to an [[InternalRow]]. This class is not
-   * thread-safe. Note that multiple calls to `apply(..)` return the same actual [[InternalRow]]
-   * object.  Thus, the caller should copy the result before making another call if required.
+   * 将类型 `T` 的对象序列化为 [[InternalRow]] 的函数。此类不是线程安全的。
+   * 注意，多次调用 `apply(..)` 会返回相同的实际 [[InternalRow]] 对象。
+   * 因此，如果需要，调用者应在进行另一次调用之前复制结果。
    */
   class Serializer[T](private val expressions: Seq[Expression])
     extends (T => InternalRow) with Serializable {
+
     @transient
     private[this] var inputRow: GenericInternalRow = _
-
     @transient
     private[this] var extractProjection: UnsafeProjection = _
 
     override def apply(t: T): InternalRow = try {
       if (extractProjection == null) {
-        inputRow = new GenericInternalRow(1)
-        extractProjection = GenerateUnsafeProjection.generate(expressions)
+        inputRow = new GenericInternalRow(1)                                 // 创建输入行容器
+        extractProjection = GenerateUnsafeProjection.generate(expressions)   // 生成代码优化的投影
       }
-      inputRow(0) = t
-      extractProjection(inputRow)
+      inputRow(0) = t               // 将对象放入输入行
+      extractProjection(inputRow)   // 执行投影转换
     } catch {
       case e: Exception =>
         throw QueryExecutionErrors.expressionEncodingError(e, expressions)
@@ -212,32 +205,26 @@ object ExpressionEncoder {
   }
 }
 
+
 /**
- * A generic encoder for JVM objects that uses Catalyst Expressions for a `serializer`
- * and a `deserializer`.
+ * JVM 对象的通用编码器，使用 Catalyst 表达式作为 `serializer` 和 `deserializer`。
  *
- * @param objSerializer An expression that can be used to encode a raw object to corresponding
- *                   Spark SQL representation that can be a primitive column, array, map or a
- *                   struct. This represents how Spark SQL generally serializes an object of
- *                   type `T`.
- * @param objDeserializer An expression that will construct an object given a Spark SQL
- *                        representation. This represents how Spark SQL generally deserializes
- *                        a serialized value in Spark SQL representation back to an object of
- *                        type `T`.
- * @param clsTag A classtag for `T`.
+ * @param objSerializer 可用于将原始对象编码为相应 Spark SQL 表示形式的表达式， 该表示形式可以是基本列、数组、映射或结构体。
+ *                      这表示 Spark SQL 通常如何序列化类型 `T` 的对象。
+ * @param objDeserializer 给定 Spark SQL 表示形式将构造对象的表达式。这表示 Spark SQL 通常如何将 Spark SQL 表示形式中的序列化值
+ *                        反序列化回类型 `T` 的对象。
+ * @param clsTag `T` 的类标签。
  */
 case class ExpressionEncoder[T](
-    objSerializer: Expression,
-    objDeserializer: Expression,
-    clsTag: ClassTag[T])
+    objSerializer: Expression,        // 对象序列化表达式 : object -> InternalRow
+    objDeserializer: Expression,      // 对象反序列化表达式 : InternalRow -> object
+    clsTag: ClassTag[T])              // 当前对象的类型标签
   extends Encoder[T] {
 
   /**
-   * A sequence of expressions, one for each top-level field that can be used to
-   * extract the values from a raw object into an [[InternalRow]]:
-   * 1. If `serializer` encodes a raw object to a struct, strip the outer If-IsNull and get
-   *    the `CreateNamedStruct`.
-   * 2. For other cases, wrap the single serializer with `CreateNamedStruct`.
+   * 表达式序列，每个顶级字段一个，可用于将原始对象的值提取到 [[InternalRow]] 中：
+   * 1. 如果 `serializer` 将原始对象编码为结构体，则剥离外部 If-IsNull 并获取 `CreateNamedStruct`。
+   * 2. 对于其他情况，用 `CreateNamedStruct` 包装单个序列化器。
    */
   val serializer: Seq[NamedExpression] = {
     val clsName = Utils.getSimpleName(clsTag.runtimeClass)
@@ -245,8 +232,8 @@ case class ExpressionEncoder[T](
     if (isSerializedAsStructForTopLevel) {
       val nullSafeSerializer = objSerializer.transformUp {
         case r: BoundReference =>
-          // For input object of Product type, we can't encode it to row if it's null, as Spark SQL
-          // doesn't allow top-level row to be null, only its columns can be null.
+          // 对于 Product 类型的输入对象，如果它为 null，我们无法将其编码为行，
+          // 因为 Spark SQL 不允许顶级行为 null，只有其列可以为 null。
           AssertNotNull(r, Seq("top level Product or row object"))
       }
       nullSafeSerializer match {
@@ -256,28 +243,26 @@ case class ExpressionEncoder[T](
           throw QueryExecutionErrors.classHasUnexpectedSerializerError(clsName, objSerializer)
       }
     } else {
-      // For other input objects like primitive, array, map, etc., we construct a struct to wrap
-      // the serializer which is a column of an row.
+      // 对于其他输入对象（如基本类型、数组、映射等），我们构造一个结构体来包装序列化器，
+      // 该序列化器是行的一列。
       //
-      // Note: Because Spark SQL doesn't allow top-level row to be null, to encode
-      // top-level Option[Product] type, we make it as a top-level struct column.
+      // 注意：因为 Spark SQL 不允许顶级行为 null，为了编码顶级 Option[Product] 类型，
+      // 我们将其作为顶级结构体列。
       CreateNamedStruct(Literal("value") :: objSerializer :: Nil)
     }
   }.flatten
 
+
   /**
-   * Returns an expression that can be used to deserialize an input row to an object of type `T`
-   * with a compatible schema. Fields of the row will be extracted using `UnresolvedAttribute`.
-   * of the same name as the constructor arguments.
+   * 返回一个表达式，该表达式可用于将输入行反序列化为具有兼容 schema 的类型 `T` 的对象。
+   * 行的字段将使用与构造函数参数同名的 `UnresolvedAttribute` 提取。
    *
-   * For complex objects that are encoded to structs, Fields of the struct will be extracted using
-   * `GetColumnByOrdinal` with corresponding ordinal.
+   * 对于编码为结构体的复杂对象，结构体的字段将使用相应序号的 `GetColumnByOrdinal` 提取。
    */
   val deserializer: Expression = {
     if (isSerializedAsStructForTopLevel) {
-      // We serialized this kind of objects to root-level row. The input of general deserializer
-      // is a `GetColumnByOrdinal(0)` expression to extract first column of a row. We need to
-      // transform attributes accessors.
+      // 我们将这种对象序列化为根级行。通用反序列化器的输入是一个 `GetColumnByOrdinal(0)`表达式，用于提取行的第一列。
+      // 我们需要转换属性访问器。
       objDeserializer.transform {
         case UnresolvedExtractValue(GetColumnByOrdinal(0, _),
             Literal(part: UTF8String, StringType)) =>
@@ -288,39 +273,33 @@ case class ExpressionEncoder[T](
         case If(IsNull(GetColumnByOrdinal(0, _)), _, i: InitializeJavaBean) => i
       }
     } else {
-      // For other input objects like primitive, array, map, etc., we deserialize the first column
-      // of a row to the object.
+      // 对于其他输入对象（如基本类型、数组、映射等），我们将行的第一列反序列化为对象。
       objDeserializer
     }
   }
 
-  // The schema after converting `T` to a Spark SQL row. This schema is dependent on the given
-  // serializer.
+  // 将 `T` 转换为 Spark SQL 行后的 schema。此 schema 依赖于给定的序列化器。
   val schema: StructType = StructType(serializer.map { s =>
     StructField(s.name, s.dataType, s.nullable)
   })
 
   /**
-   * Returns true if the type `T` is serialized as a struct by `objSerializer`.
+   * 如果类型 `T` 被 `objSerializer` 序列化为结构体，则返回 true。
    */
   def isSerializedAsStruct: Boolean = objSerializer.dataType.isInstanceOf[StructType]
 
   /**
-   * If the type `T` is serialized as a struct, when it is encoded to a Spark SQL row, fields in
-   * the struct are naturally mapped to top-level columns in a row. In other words, the serialized
-   * struct is flattened to row. But in case of the `T` is also an `Option` type, it can't be
-   * flattened to top-level row, because in Spark SQL top-level row can't be null. This method
-   * returns true if `T` is serialized as struct and is not `Option` type.
+   * 如果类型 `T` 被序列化为结构体，当它被编码为 Spark SQL 行时，结构体中的字段自然映射到行中的顶级列。换句话说，序列化的结构体被展平为行。
+   * 但如果 `T` 也是 `Option` 类型，则无法展平为顶级行，因为在 Spark SQL 中顶级行不能为 null。
+   * 如果 `T` 被序列化为结构体且不是 `Option` 类型，则此方法返回 true。
    */
   def isSerializedAsStructForTopLevel: Boolean = {
     isSerializedAsStruct && !classOf[Option[_]].isAssignableFrom(clsTag.runtimeClass)
   }
 
-  // serializer expressions are used to encode an object to a row, while the object is usually an
-  // intermediate value produced inside an operator, not from the output of the child operator. This
-  // is quite different from normal expressions, and `AttributeReference` doesn't work here
-  // (intermediate value is not an attribute). We assume that all serializer expressions use the
-  // same `BoundReference` to refer to the object, and throw exception if they don't.
+  // 序列化器表达式用于将对象编码为行，而对象通常是在算子内部产生的中间值， 而不是来自子算子的输出。
+  // 这与普通表达式有很大不同，`AttributeReference` 在这里不起作用 （中间值不是属性）。
+  // 我们假设所有序列化器表达式使用相同的 `BoundReference` 来引用对象， 如果不是，则抛出异常。
   assert(serializer.forall(_.references.isEmpty), "serializer cannot reference any attributes.")
   assert(serializer.flatMap { ser =>
     val boundRefs = ser.collect { case b: BoundReference => b }
@@ -330,13 +309,11 @@ case class ExpressionEncoder[T](
   }.distinct.length <= 1, "all serializer expressions must use the same BoundReference.")
 
   /**
-   * Returns a new copy of this encoder, where the `deserializer` is resolved and bound to the
-   * given schema.
+   * 返回此编码器的新副本，其中 `deserializer` 已解析并绑定到给定的 schema。
    *
-   * Note that, ideally encoder is used as a container of serde expressions, the resolution and
-   * binding stuff should happen inside query framework.  However, in some cases we need to
-   * use encoder as a function to do serialization directly(e.g. Dataset.collect), then we can use
-   * this method to do resolution and binding outside of query framework.
+   * 注意，理想情况下，编码器用作序列化/反序列化表达式的容器，解析和绑定工作应该
+   * 在查询框架内部进行。但是，在某些情况下，我们需要将编码器用作函数来直接进行序列化
+   * （例如 Dataset.collect），那么我们可以使用此方法在查询框架外部进行解析和绑定。
    */
   def resolveAndBind(
       attrs: Seq[Attribute] = schema.toAttributes,
@@ -351,25 +328,22 @@ case class ExpressionEncoder[T](
 
   @transient
   private lazy val optimizedDeserializer: Seq[Expression] = {
-    // When using `ExpressionEncoder` directly, we will skip the normal query processing steps
-    // (analyzer, optimizer, etc.). Here we apply the ReassignLambdaVariableID rule, as it's
-    // important to codegen performance.
+    // 当直接使用 `ExpressionEncoder` 时，我们将跳过正常的查询处理步骤（分析器、优化器等）。
+    // 这里我们应用 ReassignLambdaVariableID 规则， 因为它对代码生成性能很重要。
     val optimizedPlan = ReassignLambdaVariableID.apply(DummyExpressionHolder(Seq(deserializer)))
     optimizedPlan.asInstanceOf[DummyExpressionHolder].exprs
   }
 
   @transient
   private lazy val optimizedSerializer = {
-    // When using `ExpressionEncoder` directly, we will skip the normal query processing steps
-    // (analyzer, optimizer, etc.). Here we apply the ReassignLambdaVariableID rule, as it's
-    // important to codegen performance.
+    // 当直接使用 `ExpressionEncoder` 时，我们将跳过正常的查询处理步骤 （分析器、优化器等）。
+    // 这里我们应用 ReassignLambdaVariableID 规则， 因为它对代码生成性能很重要。
     val optimizedPlan = ReassignLambdaVariableID.apply(DummyExpressionHolder(serializer))
     optimizedPlan.asInstanceOf[DummyExpressionHolder].exprs
   }
 
   /**
-   * Returns a new set (with unique ids) of [[NamedExpression]] that represent the serialized form
-   * of this object.
+   * 返回一组新的（具有唯一 ID）[[NamedExpression]]，表示此对象的序列化形式。
    */
   def namedExpressions: Seq[NamedExpression] = schema.map(_.name).zip(serializer).map {
     case (_, ne: NamedExpression) => ne.newInstance()
@@ -377,26 +351,23 @@ case class ExpressionEncoder[T](
   }
 
   /**
-   * Create a serializer that can convert an object of type `T` to a Spark SQL Row.
+   * 创建一个可以将类型 `T` 的对象转换为 Spark SQL Row 的序列化器。
    *
-   * Note that the returned [[Serializer]] is not thread safe. Multiple calls to
-   * `serializer.apply(..)` are allowed to return the same actual [[InternalRow]] object.  Thus,
-   *  the caller should copy the result before making another call if required.
+   * 注意，返回的 [[Serializer]] 不是线程安全的。允许多次调用 `serializer.apply(..)`
+   * 返回相同的实际 [[InternalRow]] 对象。因此，如果需要，调用者应在进行另一次调用之前复制结果。
    */
   def createSerializer(): Serializer[T] = new Serializer[T](optimizedSerializer)
 
   /**
-   * Create a deserializer that can convert a Spark SQL Row into an object of type `T`.
+   * 创建一个可以将 Spark SQL Row 转换为类型 `T` 的对象的反序列化器。
    *
-   * Note that you must `resolveAndBind` an encoder to a specific schema before you can create a
-   * deserializer.
+   * 注意，在创建反序列化器之前，必须将编码器 `resolveAndBind` 到特定的 schema。
    */
   def createDeserializer(): Deserializer[T] = new Deserializer[T](optimizedDeserializer)
 
   /**
-   * The process of resolution to a given schema throws away information about where a given field
-   * is being bound by ordinal instead of by name.  This method checks to make sure this process
-   * has not been done already in places where we plan to do later composition of encoders.
+   * 解析到给定 schema 的过程会丢失有关给定字段按序号而不是按名称绑定的位置的信息。
+   * 此方法检查以确保在我们计划稍后组合编码器的地方尚未完成此过程。
    */
   def assertUnresolved(): Unit = {
     (deserializer +:  serializer).foreach(_.foreach {
@@ -420,7 +391,7 @@ case class ExpressionEncoder[T](
   override def toString: String = s"class[$schemaString]"
 }
 
-// A dummy logical plan that can hold expressions and go through optimizer rules.
+// 一个虚拟逻辑计划，可以保存表达式并通过优化器规则。
 case class DummyExpressionHolder(exprs: Seq[Expression]) extends LeafNode {
   override lazy val resolved = true
   override def output: Seq[Attribute] = Nil

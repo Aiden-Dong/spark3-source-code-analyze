@@ -30,6 +30,30 @@ import org.apache.spark.util.Utils
 
 /**
  * An interface for those aggregate physical operators that support codegen.
+ *
+ *
+ supportsHashAggregate 方法检查所有聚合函数的缓冲区属性数据类型是否支持 UnsafeRow 的原地更新：
+
+ scala
+ def supportsHashAggregate(aggregateBufferAttributes: Seq[Attribute]): Boolean = {
+ val aggregationBufferSchema = StructType.fromAttributes(aggregateBufferAttributes)
+ isAggregateBufferMutable(aggregationBufferSchema)
+ }
+
+
+ 支持 HashAggregate 的数据类型（UnsafeRow.java 第77-95行）：
+ • 基本类型：NullType, BooleanType, ByteType, ShortType, IntegerType, LongType, FloatType, DoubleType
+ • 时间类型：DateType, TimestampType, TimestampNTZType
+ • 数值类型：DecimalType
+ • 时间间隔：CalendarIntervalType, DayTimeIntervalType, YearMonthIntervalType
+
+ 不支持的类型（会使用 SortAggregate）：
+ • StringType
+ • BinaryType
+ • ArrayType
+ • MapType
+ • StructType
+ • 其他复杂类型
  */
 trait AggregateCodegenSupport
   extends BaseAggregateExec

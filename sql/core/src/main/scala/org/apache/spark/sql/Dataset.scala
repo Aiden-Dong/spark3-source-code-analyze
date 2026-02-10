@@ -185,7 +185,7 @@ private[sql] object Dataset {
 @Stable
 class Dataset[T] private[sql](
     @DeveloperApi @Unstable @transient val queryExecution: QueryExecution,     // 执行管理树
-    @DeveloperApi @Unstable @transient val encoder: Encoder[T])                //  schema 序列化类
+    @DeveloperApi @Unstable @transient val encoder: Encoder[T])                // 数据的序列化反序列化对象
   extends Serializable {
 
   // 获取 sparkSession

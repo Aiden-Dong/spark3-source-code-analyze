@@ -53,11 +53,10 @@ import org.apache.spark.util._
 import org.apache.spark.util.io.ChunkedByteBuffer
 
 /**
- * Spark executor, backed by a threadpool to run tasks.
+ * Spark 执行器，由线程池支持来运行任务。
  *
- * This can be used with Mesos, YARN, kubernetes and the standalone scheduler.
- * An internal RPC interface is used for communication with the driver,
- * except in the case of Mesos fine-grained mode.
+ * 可与 Mesos、YARN、Kubernetes 和独立调度器一起使用。
+ * 使用内部 RPC 接口与驱动程序通信，Mesos 细粒度模式除外。
  */
 private[spark] class Executor(
     executorId: String,
@@ -75,8 +74,9 @@ private[spark] class Executor(
   val stopHookReference = ShutdownHookManager.addShutdownHook(
     () => stop()
   )
-  // Application dependencies (added through SparkContext) that we've fetched so far on this node.
-  // Each map holds the master's timestamp for the version of that file or JAR we got.
+
+  // 应用依赖（通过 SparkContext 添加），我们在此节点上已获取的。
+  // 每个映射保存我们获取的文件或 JAR 版本的主节点时间戳。
   private val currentFiles: HashMap[String, Long] = new HashMap[String, Long]()
   private val currentJars: HashMap[String, Long] = new HashMap[String, Long]()
   private val currentArchives: HashMap[String, Long] = new HashMap[String, Long]()
@@ -85,25 +85,21 @@ private[spark] class Executor(
 
   private[executor] val conf = env.conf
 
-  // No ip or host:port - just hostname
+  // 没有 IP 或 host:port - 只有主机名
   Utils.checkHost(executorHostname)
-  // must not have port specified.
-  assert (0 == Utils.parseHostPort(executorHostname)._2)
 
-  // Make sure the local hostname we report matches the cluster scheduler's name for this host
+  assert (0 == Utils.parseHostPort(executorHostname)._2) // 不能指定端口。
+
+  // 确保我们报告的本地主机名与集群调度器对此主机的名称匹配
   Utils.setCustomHostname(executorHostname)
 
   if (!isLocal) {
-    // Setup an uncaught exception handler for non-local mode.
-    // Make any thread terminations due to uncaught exceptions kill the entire
-    // executor process to avoid surprising stalls.
+    // 为非本地模式设置未捕获异常处理器。
+    // 使由于未捕获异常导致的任何线程终止都会终止整个执行器进程，以避免令人惊讶的停顿。
     Thread.setDefaultUncaughtExceptionHandler(uncaughtExceptionHandler)
   }
 
-  // Start worker thread pool
-  // Use UninterruptibleThread to run tasks so that we can allow running codes without being
-  // interrupted by `Thread.interrupt()`. Some issues, such as KAFKA-1894, HADOOP-10622,
-  // will hang forever if some methods are interrupted.
+  // 启动工作线程池- 用来执行 Task
   private[executor] val threadPool = {
     val threadFactory = new ThreadFactoryBuilder()
       .setDaemon(true)
@@ -112,18 +108,18 @@ private[spark] class Executor(
       .build()
     Executors.newCachedThreadPool(threadFactory).asInstanceOf[ThreadPoolExecutor]
   }
+
+
   private val schemes = conf.get(EXECUTOR_METRICS_FILESYSTEM_SCHEMES)
     .toLowerCase(Locale.ROOT).split(",").map(_.trim).filter(_.nonEmpty)
+
   private val executorSource = new ExecutorSource(threadPool, executorId, schemes)
-  // Pool used for threads that supervise task killing / cancellation
+  // 用于监督任务终止/取消的线程池
   private val taskReaperPool = ThreadUtils.newDaemonCachedThreadPool("Task reaper")
-  // For tasks which are in the process of being killed, this map holds the most recently created
-  // TaskReaper. All accesses to this map should be synchronized on the map itself (this isn't
-  // a ConcurrentHashMap because we use the synchronization for purposes other than simply guarding
-  // the integrity of the map's internal state). The purpose of this map is to prevent the creation
-  // of a separate TaskReaper for every killTask() of a given task. Instead, this map allows us to
-  // track whether an existing TaskReaper fulfills the role of a TaskReaper that we would otherwise
-  // create. The map key is a task id.
+  // 对于正在被终止的任务，此映射保存最近创建的TaskReaper。
+  // 对此映射的所有访问都应在映射本身上同步（这不是 ConcurrentHashMap，因为我们使用同步的目的不仅仅是保护映射内部状态的完整性）。
+  // 此映射的目的是防止为给定任务的每次 killTask() 创建单独的 TaskReaper。
+  // 相反，此映射允许我们跟踪现有 TaskReaper 是否满足我们原本会创建的 TaskReaper 的角色。映射键是task ID。
   private val taskReaperForTask: HashMap[Long, TaskReaper] = HashMap[Long, TaskReaper]()
 
   val executorMetricsSource =
@@ -140,47 +136,46 @@ private[spark] class Executor(
     executorMetricsSource.foreach(_.register(env.metricsSystem))
     env.metricsSystem.registerSource(env.blockManager.shuffleMetricsSource)
   } else {
-    // This enable the registration of the executor source in local mode.
-    // The actual registration happens in SparkContext,
-    // it cannot be done here as the appId is not available yet
+    // 这使得在本地模式下可以注册执行器源。
+    // 实际注册发生在 SparkContext 中，
+    // 不能在这里完成，因为 appId 尚不可用
     Executor.executorSourceLocalModeOnly = executorSource
   }
 
-  // Whether to load classes in user jars before those in Spark jars
+  // 是否在 Spark JAR 之前加载用户 JAR 中的类
   private val userClassPathFirst = conf.get(EXECUTOR_USER_CLASS_PATH_FIRST)
 
-  // Whether to monitor killed / interrupted tasks
+  // 是否监控已终止/中断的任务
   private val taskReaperEnabled = conf.get(TASK_REAPER_ENABLED)
 
   private val killOnFatalErrorDepth = conf.get(EXECUTOR_KILL_ON_FATAL_ERROR_DEPTH)
 
-  // Create our ClassLoader
-  // do this after SparkEnv creation so can access the SecurityManager
+  // 创建我们的 ClassLoader
+  // 在 SparkEnv 创建后执行此操作，以便可以访问 SecurityManager
   private val urlClassLoader = createClassLoader()
   private val replClassLoader = addReplClassLoaderIfNeeded(urlClassLoader)
 
-  // Set the classloader for serializer
+  // 为序列化器设置类加载器
   env.serializer.setDefaultClassLoader(replClassLoader)
-  // SPARK-21928.  SerializerManager's internal instance of Kryo might get used in netty threads
-  // for fetching remote cached RDD blocks, so need to make sure it uses the right classloader too.
+  // SPARK-21928。
+  // SerializerManager 的内部 Kryo 实例可能会在 netty 线程中使用用于获取远程缓存的 RDD 块，因此需要确保它也使用正确的类加载器。
   env.serializerManager.setDefaultClassLoader(replClassLoader)
 
-  // Max size of direct result. If task result is bigger than this, we use the block manager
-  // to send the result back.
+  // 直接结果的最大大小。如果任务结果大于此值，我们使用块管理器将结果发送回去。
   private val maxDirectResultSize = Math.min(
     conf.get(TASK_MAX_DIRECT_RESULT_SIZE),
     RpcUtils.maxMessageSizeBytes(conf))
 
   private val maxResultSize = conf.get(MAX_RESULT_SIZE)
 
-  // Maintains the list of running tasks.
+  // 维护正在运行的任务列表。
   private[executor] val runningTasks = new ConcurrentHashMap[Long, TaskRunner]
 
-  // Kill mark TTL in milliseconds - 10 seconds.
+  // 终止标记 TTL（毫秒）- 10 秒。
   private val KILL_MARK_TTL_MS = 10000L
 
-  // Kill marks with interruptThread flag, kill reason and timestamp.
-  // This is to avoid dropping the kill event when killTask() is called before launchTask().
+  // 带有 interruptThread 标志、终止原因和时间戳的终止标记。
+  // 这是为了避免在 launchTask() 之前调用 killTask() 时丢失终止事件。
   private[executor] val killMarks = new ConcurrentHashMap[Long, (Boolean, String, Long)]
 
   private val killMarkCleanupTask = new Runnable {
@@ -195,7 +190,7 @@ private[spark] class Executor(
     }
   }
 
-  // Kill mark cleanup thread executor.
+  // 终止标记清理线程执行器。
   private val killMarkCleanupService =
     ThreadUtils.newDaemonSingleThreadScheduledExecutor("executor-kill-mark-cleanup")
 
@@ -203,55 +198,52 @@ private[spark] class Executor(
     killMarkCleanupTask, KILL_MARK_TTL_MS, KILL_MARK_TTL_MS, TimeUnit.MILLISECONDS)
 
   /**
-   * When an executor is unable to send heartbeats to the driver more than `HEARTBEAT_MAX_FAILURES`
-   * times, it should kill itself. The default value is 60. For example, if max failures is 60 and
-   * heartbeat interval is 10s, then it will try to send heartbeats for up to 600s (10 minutes).
+   * 当执行器无法向驱动程序发送心跳超过 `HEARTBEAT_MAX_FAILURES`次时，它应该终止自己。
+   * 默认值为 60。例如，如果最大失败次数为 60 且心跳间隔为 10 秒，则它将尝试发送心跳最多 600 秒（10 分钟）。
    */
   private val HEARTBEAT_MAX_FAILURES = conf.get(EXECUTOR_HEARTBEAT_MAX_FAILURES)
 
   /**
-   * Whether to drop empty accumulators from heartbeats sent to the driver. Including the empty
-   * accumulators (that satisfy isZero) can make the size of the heartbeat message very large.
+   * 是否从发送到驱动程序的心跳中删除空累加器。包含空累加器（满足 isZero）可能会使心跳消息的大小非常大。
    */
   private val HEARTBEAT_DROP_ZEROES = conf.get(EXECUTOR_HEARTBEAT_DROP_ZERO_ACCUMULATOR_UPDATES)
 
   /**
-   * Interval to send heartbeats, in milliseconds
+   * 发送心跳的间隔，以毫秒为单位
    */
   private val HEARTBEAT_INTERVAL_MS = conf.get(EXECUTOR_HEARTBEAT_INTERVAL)
 
   /**
-   * Interval to poll for executor metrics, in milliseconds
+   * 轮询执行器指标的间隔，以毫秒为单位
    */
   private val METRICS_POLLING_INTERVAL_MS = conf.get(EXECUTOR_METRICS_POLLING_INTERVAL)
 
   private val pollOnHeartbeat = if (METRICS_POLLING_INTERVAL_MS > 0) false else true
 
-  // Poller for the memory metrics. Visible for testing.
+  // 内存指标的轮询器。对测试可见。
   private[executor] val metricsPoller = new ExecutorMetricsPoller(
     env.memoryManager,
     METRICS_POLLING_INTERVAL_MS,
     executorMetricsSource)
 
-  // Executor for the heartbeat task.
+  // 心跳任务的执行器。
   private val heartbeater = new Heartbeater(
     () => Executor.this.reportHeartBeat(),
     "executor-heartbeater",
     HEARTBEAT_INTERVAL_MS)
 
-  // must be initialized before running startDriverHeartbeat()
-  private val heartbeatReceiverRef =
-    RpcUtils.makeDriverRef(HeartbeatReceiver.ENDPOINT_NAME, conf, env.rpcEnv)
+  // 必须在运行 startDriverHeartbeat() 之前初始化
+  private val heartbeatReceiverRef = RpcUtils.makeDriverRef(HeartbeatReceiver.ENDPOINT_NAME, conf, env.rpcEnv)
 
   /**
-   * Count the failure times of heartbeat. It should only be accessed in the heartbeat thread. Each
-   * successful heartbeat will reset it to 0.
+   * 计算心跳失败次数。它应该只在心跳线程中访问。每次
+   * 成功的心跳将其重置为 0。
    */
   private var heartbeatFailures = 0
 
   /**
-   * Flag to prevent launching new tasks while decommissioned. There could be a race condition
-   * accessing this, but decommissioning is only intended to help not be a hard stop.
+   * 防止在退役时启动新任务的标志。访问此标志可能存在竞争条件，
+   * 但退役只是为了帮助，而不是硬停止。
    */
   private var decommissioned = false
 
@@ -259,11 +251,11 @@ private[spark] class Executor(
 
   private val appStartTime = conf.getLong("spark.app.startTime", 0)
 
-  // To allow users to distribute plugins and their required files
-  // specified by --jars, --files and --archives on application submission, those
-  // jars/files/archives should be downloaded and added to the class loader via
-  // updateDependencies. This should be done before plugin initialization below
-  // because executors search plugins from the class loader and initialize them.
+  // 为了允许用户分发插件及其所需的文件
+  // 通过应用程序提交时的 --jars、--files 和 --archives 指定，这些
+  // jars/files/archives 应该被下载并通过
+  // updateDependencies 添加到类加载器。这应该在下面的插件初始化之前完成
+  // 因为执行器从类加载器搜索插件并初始化它们。
   private val Seq(initialUserJars, initialUserFiles, initialUserArchives) =
     Seq("jar", "file", "archive").map { key =>
       conf.getOption(s"spark.app.initial.$key.urls").map { urls =>
@@ -272,9 +264,9 @@ private[spark] class Executor(
     }
   updateDependencies(initialUserFiles, initialUserJars, initialUserArchives)
 
-  // Plugins need to load using a class loader that includes the executor's user classpath.
-  // Plugins also needs to be initialized after the heartbeater started
-  // to avoid blocking to send heartbeat (see SPARK-32175).
+  // 插件需要使用包含执行器用户类路径的类加载器加载。
+  // 插件还需要在心跳启动后初始化
+  // 以避免阻塞发送心跳（参见 SPARK-32175）。
   private val plugins: Option[PluginContainer] = Utils.withContextClassLoader(replClassLoader) {
     PluginContainer(env, resources.asJava)
   }
@@ -284,7 +276,7 @@ private[spark] class Executor(
   private[executor] def numRunningTasks: Int = runningTasks.size()
 
   /**
-   * Mark an executor for decommissioning and avoid launching new tasks.
+   * 标记执行器为退役并避免启动新任务。
    */
   private[spark] def decommission(): Unit = {
     decommissioned = true
@@ -293,6 +285,7 @@ private[spark] class Executor(
   private[executor] def createTaskRunner(context: ExecutorBackend,
     taskDescription: TaskDescription) = new TaskRunner(context, taskDescription, plugins)
 
+  // 运行任务 - 创建一个 TaskRunner, 提交给线程池来处理
   def launchTask(context: ExecutorBackend, taskDescription: TaskDescription): Unit = {
     val taskId = taskDescription.taskId
     val tr = createTaskRunner(context, taskDescription)
@@ -327,21 +320,21 @@ private[spark] class Executor(
             None
           }
         }
-        // Execute the TaskReaper from outside of the synchronized block.
+        // 从同步块外部执行 TaskReaper。
         maybeNewTaskReaper.foreach(taskReaperPool.execute)
       } else {
         taskRunner.kill(interruptThread = interruptThread, reason = reason)
       }
-      // Safe to remove kill mark as we got a chance with the TaskRunner.
+      // 安全地删除终止标记，因为我们有机会使用 TaskRunner。
       killMarks.remove(taskId)
     }
   }
 
   /**
-   * Function to kill the running tasks in an executor.
-   * This can be called by executor back-ends to kill the
-   * tasks instead of taking the JVM down.
-   * @param interruptThread whether to interrupt the task thread
+   * 终止执行器中正在运行的任务的函数。
+   * 这可以由执行器后端调用以终止
+   * 任务，而不是关闭 JVM。
+   * @param interruptThread 是否中断任务线程
    */
   def killAllTasks(interruptThread: Boolean, reason: String) : Unit = {
     runningTasks.keys().asScala.foreach(t =>
@@ -376,7 +369,7 @@ private[spark] class Executor(
         killMarkCleanupService.shutdown()
       }
       if (replClassLoader != null && plugins != null) {
-        // Notify plugins that executor is shutting down so they can terminate cleanly
+        // 通知插件执行器正在关闭，以便它们可以干净地终止
         Utils.withContextClassLoader(replClassLoader) {
           plugins.foreach(_.shutdown())
         }
@@ -387,14 +380,14 @@ private[spark] class Executor(
     }
   }
 
-  /** Returns the total amount of time this JVM process has spent in garbage collection. */
+  /** 返回此 JVM 进程在垃圾回收中花费的总时间。 */
   private def computeTotalGcTime(): Long = {
     ManagementFactory.getGarbageCollectorMXBeans.asScala.map(_.getCollectionTime).sum
   }
 
   class TaskRunner(
-      execBackend: ExecutorBackend,
-      private val taskDescription: TaskDescription,
+      execBackend: ExecutorBackend,                    // 任务运行后端(yarn/k8s/...)
+      private val taskDescription: TaskDescription,    // 任务描述信息，包含其序列化信息
       private val plugins: Option[PluginContainer])
     extends Runnable {
 
@@ -404,25 +397,23 @@ private[spark] class Executor(
     val mdcProperties = taskDescription.properties.asScala
       .filter(_._1.startsWith("mdc.")).toSeq
 
-    /** If specified, this task has been killed and this option contains the reason. */
+    /** 如果指定，此任务已被终止，此选项包含原因。 */
     @volatile private var reasonIfKilled: Option[String] = None
 
     @volatile private var threadId: Long = -1
 
     def getThreadId: Long = threadId
 
-    /** Whether this task has been finished. */
+    /** 此任务是否已完成。 */
     @GuardedBy("TaskRunner.this")
     private var finished = false
-
     def isFinished: Boolean = synchronized { finished }
 
-    /** How much the JVM process has spent in GC when the task starts to run. */
+    /** 任务开始运行时 JVM 进程在 GC 中花费的时间。 */
     @volatile var startGCTime: Long = _
 
     /**
-     * The task to run. This will be set in run() by deserializing the task binary coming
-     * from the driver. Once it is set, it will never be changed.
+     * 要运行的任务。这将在 run() 中通过反序列化来自驱动程序的任务二进制文件来设置。一旦设置，它将永远不会改变。
      */
     @volatile var task: Task[Any] = _
 
@@ -439,37 +430,37 @@ private[spark] class Executor(
     }
 
     /**
-     * Set the finished flag to true and clear the current thread's interrupt status
+     * 将 finished 标志设置为 true 并清除当前线程的中断状态
      */
     private def setTaskFinishedAndClearInterruptStatus(): Unit = synchronized {
       this.finished = true
-      // SPARK-14234 - Reset the interrupted status of the thread to avoid the
-      // ClosedByInterruptException during execBackend.statusUpdate which causes
-      // Executor to crash
+      // SPARK-14234 - 重置线程的中断状态以避免
+      // execBackend.statusUpdate 期间的 ClosedByInterruptException，这会导致
+      // 执行器崩溃
       Thread.interrupted()
-      // Notify any waiting TaskReapers. Generally there will only be one reaper per task but there
-      // is a rare corner-case where one task can have two reapers in case cancel(interrupt=False)
-      // is followed by cancel(interrupt=True). Thus we use notifyAll() to avoid a lost wakeup:
+      // 通知任何等待的 TaskReapers。通常每个任务只有一个 reaper，但有
+      // 一个罕见的边缘情况，即一个任务可以有两个 reapers，以防 cancel(interrupt=False)
+      // 后跟 cancel(interrupt=True)。因此我们使用 notifyAll() 以避免丢失唤醒：
       notifyAll()
     }
 
     /**
-     *  Utility function to:
-     *    1. Report executor runtime and JVM gc time if possible
-     *    2. Collect accumulator updates
-     *    3. Set the finished flag to true and clear current thread's interrupt status
+     * 实用函数：
+     *   1. 如果可能，报告执行器运行时间和 JVM gc 时间
+     *   2. 收集累加器更新
+     *   3. 将 finished 标志设置为 true 并清除当前线程的中断状态
      */
     private def collectAccumulatorsAndResetStatusOnFailure(taskStartTimeNs: Long) = {
-      // Report executor runtime and JVM gc time
+      // 报告执行器运行时间和 JVM gc 时间
       Option(task).foreach(t => {
         t.metrics.setExecutorRunTime(TimeUnit.NANOSECONDS.toMillis(
-          // SPARK-32898: it's possible that a task is killed when taskStartTimeNs has the initial
-          // value(=0) still. In this case, the executorRunTime should be considered as 0.
+          // SPARK-32898：当 taskStartTimeNs 仍具有初始值（=0）时，任务可能被终止。
+          // 在这种情况下，executorRunTime 应被视为 0。
           if (taskStartTimeNs > 0) System.nanoTime() - taskStartTimeNs else 0))
         t.metrics.setJvmGCTime(computeTotalGcTime() - startGCTime)
       })
 
-      // Collect latest accumulator values to report back to the driver
+      // 收集最新的累加器值以报告回驱动程序
       val accums: Seq[AccumulatorV2[_, _]] =
         Option(task).map(_.collectAccumulatorUpdates(taskFailed = true)).getOrElse(Seq.empty)
       val accUpdates = accums.map(acc => acc.toInfo(Some(acc.value), None))
@@ -480,17 +471,23 @@ private[spark] class Executor(
 
     override def run(): Unit = {
       setMDCForTask(taskName, mdcProperties)
+      // 线程处理
       threadId = Thread.currentThread.getId
-      Thread.currentThread.setName(threadName)
+      Thread.currentThread.setName(threadName)  // Executor task launch worker for $taskName
+
       val threadMXBean = ManagementFactory.getThreadMXBean
-      val taskMemoryManager = new TaskMemoryManager(env.memoryManager, taskId)
+      val taskMemoryManager = new TaskMemoryManager(env.memoryManager, taskId)   // 获取任务执行内存管理
       val deserializeStartTimeNs = System.nanoTime()
+
       val deserializeStartCpuTime = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
         threadMXBean.getCurrentThreadCpuTime
       } else 0L
+
       Thread.currentThread.setContextClassLoader(replClassLoader)
       val ser = env.closureSerializer.newInstance()
       logInfo(s"Running $taskName")
+
+      // 更新任务执行状态为Running
       execBackend.statusUpdate(taskId, TaskState.RUNNING, EMPTY_BYTE_BUFFER)
       var taskStartTimeNs: Long = 0
       var taskStartCpu: Long = 0
@@ -498,32 +495,31 @@ private[spark] class Executor(
       var taskStarted: Boolean = false
 
       try {
-        // Must be set before updateDependencies() is called, in case fetching dependencies
-        // requires access to properties contained within (e.g. for access control).
         Executor.taskDeserializationProps.set(taskDescription.properties)
-
         updateDependencies(
           taskDescription.addedFiles, taskDescription.addedJars, taskDescription.addedArchives)
+
+        // 反序列化得到 Task 执行实体
         task = ser.deserialize[Task[Any]](
           taskDescription.serializedTask, Thread.currentThread.getContextClassLoader)
         task.localProperties = taskDescription.properties
         task.setTaskMemoryManager(taskMemoryManager)
 
-        // If this task has been killed before we deserialized it, let's quit now. Otherwise,
-        // continue executing the task.
+        // 如果此任务在我们反序列化它之前已被终止，现在退出。否则，
+        // 继续执行任务。
         val killReason = reasonIfKilled
         if (killReason.isDefined) {
-          // Throw an exception rather than returning, because returning within a try{} block
-          // causes a NonLocalReturnControl exception to be thrown. The NonLocalReturnControl
-          // exception will be caught by the catch block, leading to an incorrect ExceptionFailure
-          // for the task.
+          // 抛出异常而不是返回，因为在 try{} 块内返回
+          // 会导致抛出 NonLocalReturnControl 异常。NonLocalReturnControl
+          // 异常将被 catch 块捕获，导致任务的
+          // ExceptionFailure 不正确。
           throw new TaskKilledException(killReason.get)
         }
 
-        // The purpose of updating the epoch here is to invalidate executor map output status cache
-        // in case FetchFailures have occurred. In local mode `env.mapOutputTracker` will be
-        // MapOutputTrackerMaster and its cache invalidation is not based on epoch numbers so
-        // we don't need to make any special calls here.
+        // 在此处更新 epoch 的目的是使执行器 map 输出状态缓存失效
+        // 以防发生 FetchFailures。在本地模式下，`env.mapOutputTracker` 将是
+        // MapOutputTrackerMaster，其缓存失效不基于 epoch 数字，因此
+        // 我们不需要在这里进行任何特殊调用。
         if (!isLocal) {
           logDebug(s"$taskName's epoch is ${task.epoch}")
           env.mapOutputTracker.asInstanceOf[MapOutputTrackerWorker].updateEpoch(task.epoch)
@@ -532,13 +528,14 @@ private[spark] class Executor(
         metricsPoller.onTaskStart(taskId, task.stageId, task.stageAttemptId)
         taskStarted = true
 
-        // Run the actual task and measure its runtime.
+        // 运行实际任务并测量其运行时间。
         taskStartTimeNs = System.nanoTime()
         taskStartCpu = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
           threadMXBean.getCurrentThreadCpuTime
         } else 0L
         var threwException = true
         val value = Utils.tryWithSafeFinally {
+          // 开始执行该任务
           val res = task.run(
             taskAttemptId = taskId,
             attemptNumber = taskDescription.attemptNumber,
@@ -549,6 +546,7 @@ private[spark] class Executor(
           threwException = false
           res
         } {
+          // 任务运行完成安全收尾工作
           val releasedLocks = env.blockManager.releaseAllLocksForTask(taskId)
           val freedMemory = taskMemoryManager.cleanUpAllAllocatedMemory()
 
@@ -562,8 +560,7 @@ private[spark] class Executor(
           }
 
           if (releasedLocks.nonEmpty && !threwException) {
-            val errMsg =
-              s"${releasedLocks.size} block locks were not released by $taskName\n" +
+            val errMsg = s"${releasedLocks.size} block locks were not released by $taskName\n" +
                 releasedLocks.mkString("[", ", ", "]")
             if (conf.get(STORAGE_EXCEPTION_PIN_LEAK)) {
               throw new SparkException(errMsg)
@@ -573,9 +570,8 @@ private[spark] class Executor(
           }
         }
         task.context.fetchFailed.foreach { fetchFailure =>
-          // uh-oh.  it appears the user code has caught the fetch-failure without throwing any
-          // other exceptions.  Its *possible* this is what the user meant to do (though highly
-          // unlikely).  So we will log an error and keep going.
+          // 哎呀。看起来用户代码捕获了 fetch-failure 而没有抛出任何其他异常。
+          // 这*可能*是用户想要做的（尽管极不可能）。所以我们将记录一个错误并继续。
           logError(s"$taskName completed successfully though internally it encountered " +
             s"unrecoverable fetch failures!  Most likely this means user code is incorrectly " +
             s"swallowing Spark's internal ${classOf[FetchFailedException]}", fetchFailure)
@@ -585,7 +581,7 @@ private[spark] class Executor(
           threadMXBean.getCurrentThreadCpuTime
         } else 0L
 
-        // If the task has been killed, let's fail it.
+        // 如果任务已被终止，让我们使其失败。
         task.context.killTaskIfInterrupted()
 
         val resultSer = env.serializer.newInstance()
@@ -593,63 +589,42 @@ private[spark] class Executor(
         val valueBytes = resultSer.serialize(value)
         val afterSerializationNs = System.nanoTime()
 
-        // Deserialization happens in two parts: first, we deserialize a Task object, which
-        // includes the Partition. Second, Task.run() deserializes the RDD and function to be run.
-        task.metrics.setExecutorDeserializeTime(TimeUnit.NANOSECONDS.toMillis(
-          (taskStartTimeNs - deserializeStartTimeNs) + task.executorDeserializeTimeNs))
-        task.metrics.setExecutorDeserializeCpuTime(
-          (taskStartCpu - deserializeStartCpuTime) + task.executorDeserializeCpuTime)
-        // We need to subtract Task.run()'s deserialization time to avoid double-counting
-        task.metrics.setExecutorRunTime(TimeUnit.NANOSECONDS.toMillis(
-          (taskFinishNs - taskStartTimeNs) - task.executorDeserializeTimeNs))
-        task.metrics.setExecutorCpuTime(
-          (taskFinishCpu - taskStartCpu) - task.executorDeserializeCpuTime)
+        // 反序列化分两部分进行：首先，我们反序列化一个 Task 对象，其中包括 Partition。其次，Task.run() 反序列化要运行的 RDD 和函数。
+        task.metrics.setExecutorDeserializeTime(TimeUnit.NANOSECONDS.toMillis((taskStartTimeNs - deserializeStartTimeNs) + task.executorDeserializeTimeNs))
+        task.metrics.setExecutorDeserializeCpuTime((taskStartCpu - deserializeStartCpuTime) + task.executorDeserializeCpuTime)
+        // 我们需要减去 Task.run() 的反序列化时间以避免重复计算
+        task.metrics.setExecutorRunTime(TimeUnit.NANOSECONDS.toMillis((taskFinishNs - taskStartTimeNs) - task.executorDeserializeTimeNs))
+        task.metrics.setExecutorCpuTime((taskFinishCpu - taskStartCpu) - task.executorDeserializeCpuTime)
         task.metrics.setJvmGCTime(computeTotalGcTime() - startGCTime)
-        task.metrics.setResultSerializationTime(TimeUnit.NANOSECONDS.toMillis(
-          afterSerializationNs - beforeSerializationNs))
+        task.metrics.setResultSerializationTime(TimeUnit.NANOSECONDS.toMillis(afterSerializationNs - beforeSerializationNs))
 
-        // Expose task metrics using the Dropwizard metrics system.
-        // Update task metrics counters
+        // 使用 Dropwizard 指标系统公开任务指标。 更新任务指标计数器
         executorSource.METRIC_CPU_TIME.inc(task.metrics.executorCpuTime)
         executorSource.METRIC_RUN_TIME.inc(task.metrics.executorRunTime)
         executorSource.METRIC_JVM_GC_TIME.inc(task.metrics.jvmGCTime)
         executorSource.METRIC_DESERIALIZE_TIME.inc(task.metrics.executorDeserializeTime)
         executorSource.METRIC_DESERIALIZE_CPU_TIME.inc(task.metrics.executorDeserializeCpuTime)
         executorSource.METRIC_RESULT_SERIALIZE_TIME.inc(task.metrics.resultSerializationTime)
-        executorSource.METRIC_SHUFFLE_FETCH_WAIT_TIME
-          .inc(task.metrics.shuffleReadMetrics.fetchWaitTime)
+        executorSource.METRIC_SHUFFLE_FETCH_WAIT_TIME.inc(task.metrics.shuffleReadMetrics.fetchWaitTime)
         executorSource.METRIC_SHUFFLE_WRITE_TIME.inc(task.metrics.shuffleWriteMetrics.writeTime)
-        executorSource.METRIC_SHUFFLE_TOTAL_BYTES_READ
-          .inc(task.metrics.shuffleReadMetrics.totalBytesRead)
-        executorSource.METRIC_SHUFFLE_REMOTE_BYTES_READ
-          .inc(task.metrics.shuffleReadMetrics.remoteBytesRead)
-        executorSource.METRIC_SHUFFLE_REMOTE_BYTES_READ_TO_DISK
-          .inc(task.metrics.shuffleReadMetrics.remoteBytesReadToDisk)
-        executorSource.METRIC_SHUFFLE_LOCAL_BYTES_READ
-          .inc(task.metrics.shuffleReadMetrics.localBytesRead)
-        executorSource.METRIC_SHUFFLE_RECORDS_READ
-          .inc(task.metrics.shuffleReadMetrics.recordsRead)
-        executorSource.METRIC_SHUFFLE_REMOTE_BLOCKS_FETCHED
-          .inc(task.metrics.shuffleReadMetrics.remoteBlocksFetched)
-        executorSource.METRIC_SHUFFLE_LOCAL_BLOCKS_FETCHED
-          .inc(task.metrics.shuffleReadMetrics.localBlocksFetched)
-        executorSource.METRIC_SHUFFLE_BYTES_WRITTEN
-          .inc(task.metrics.shuffleWriteMetrics.bytesWritten)
-        executorSource.METRIC_SHUFFLE_RECORDS_WRITTEN
-          .inc(task.metrics.shuffleWriteMetrics.recordsWritten)
-        executorSource.METRIC_INPUT_BYTES_READ
-          .inc(task.metrics.inputMetrics.bytesRead)
-        executorSource.METRIC_INPUT_RECORDS_READ
-          .inc(task.metrics.inputMetrics.recordsRead)
-        executorSource.METRIC_OUTPUT_BYTES_WRITTEN
-          .inc(task.metrics.outputMetrics.bytesWritten)
-        executorSource.METRIC_OUTPUT_RECORDS_WRITTEN
-          .inc(task.metrics.outputMetrics.recordsWritten)
+        executorSource.METRIC_SHUFFLE_TOTAL_BYTES_READ.inc(task.metrics.shuffleReadMetrics.totalBytesRead)
+        executorSource.METRIC_SHUFFLE_REMOTE_BYTES_READ.inc(task.metrics.shuffleReadMetrics.remoteBytesRead)
+        executorSource.METRIC_SHUFFLE_REMOTE_BYTES_READ_TO_DISK.inc(task.metrics.shuffleReadMetrics.remoteBytesReadToDisk)
+        executorSource.METRIC_SHUFFLE_LOCAL_BYTES_READ.inc(task.metrics.shuffleReadMetrics.localBytesRead)
+        executorSource.METRIC_SHUFFLE_RECORDS_READ.inc(task.metrics.shuffleReadMetrics.recordsRead)
+        executorSource.METRIC_SHUFFLE_REMOTE_BLOCKS_FETCHED.inc(task.metrics.shuffleReadMetrics.remoteBlocksFetched)
+        executorSource.METRIC_SHUFFLE_LOCAL_BLOCKS_FETCHED.inc(task.metrics.shuffleReadMetrics.localBlocksFetched)
+        executorSource.METRIC_SHUFFLE_BYTES_WRITTEN.inc(task.metrics.shuffleWriteMetrics.bytesWritten)
+        executorSource.METRIC_SHUFFLE_RECORDS_WRITTEN.inc(task.metrics.shuffleWriteMetrics.recordsWritten)
+        executorSource.METRIC_INPUT_BYTES_READ.inc(task.metrics.inputMetrics.bytesRead)
+        executorSource.METRIC_INPUT_RECORDS_READ.inc(task.metrics.inputMetrics.recordsRead)
+        executorSource.METRIC_OUTPUT_BYTES_WRITTEN.inc(task.metrics.outputMetrics.bytesWritten)
+        executorSource.METRIC_OUTPUT_RECORDS_WRITTEN.inc(task.metrics.outputMetrics.recordsWritten)
         executorSource.METRIC_RESULT_SIZE.inc(task.metrics.resultSize)
         executorSource.METRIC_DISK_BYTES_SPILLED.inc(task.metrics.diskBytesSpilled)
         executorSource.METRIC_MEMORY_BYTES_SPILLED.inc(task.metrics.memoryBytesSpilled)
 
-        // Note: accumulator updates must be collected after TaskMetrics is updated
+        // 注意：必须在 TaskMetrics 更新后收集累加器更新
         val accumUpdates = task.collectAccumulatorUpdates()
         val metricPeaks = metricsPoller.getTaskMetricPeaks(taskId)
         // TODO: do not serialize value twice
@@ -657,14 +632,15 @@ private[spark] class Executor(
         val serializedDirectResult = ser.serialize(directResult)
         val resultSize = serializedDirectResult.limit()
 
-        // directSend = sending directly back to the driver
+        // TODO: 不要序列化值两次
+        // 将结果序列化
         val serializedResult: ByteBuffer = {
           if (maxResultSize > 0 && resultSize > maxResultSize) {
             logWarning(s"Finished $taskName. Result is larger than maxResultSize " +
               s"(${Utils.bytesToString(resultSize)} > ${Utils.bytesToString(maxResultSize)}), " +
               s"dropping it.")
             ser.serialize(new IndirectTaskResult[Any](TaskResultBlockId(taskId), resultSize))
-          } else if (resultSize > maxDirectResultSize) {
+          } else if (resultSize > maxDirectResultSize) {   // 数据量过大，则将数据序列化到BlockManager 上
             val blockId = TaskResultBlockId(taskId)
             env.blockManager.putBytes(
               blockId,
@@ -687,8 +663,7 @@ private[spark] class Executor(
           logInfo(s"Executor killed $taskName, reason: ${t.reason}")
 
           val (accums, accUpdates) = collectAccumulatorsAndResetStatusOnFailure(taskStartTimeNs)
-          // Here and below, put task metric peaks in a WrappedArray to expose them as a Seq
-          // without requiring a copy.
+          // 这里和下面，将任务指标峰值放入 WrappedArray 以将它们公开为 Seq 而不需要复制。
           val metricPeaks = WrappedArray.make(metricsPoller.getTaskMetricPeaks(taskId))
           val reason = TaskKilled(t.reason, accUpdates, accums, metricPeaks.toSeq)
           plugins.foreach(_.onTaskFailed(reason))
@@ -708,8 +683,8 @@ private[spark] class Executor(
         case t: Throwable if hasFetchFailure && !Executor.isFatalError(t, killOnFatalErrorDepth) =>
           val reason = task.context.fetchFailed.get.toTaskFailedReason
           if (!t.isInstanceOf[FetchFailedException]) {
-            // there was a fetch failure in the task, but some user code wrapped that exception
-            // and threw something else.  Regardless, we treat it as a fetch failure.
+            // 任务中存在 fetch failure，但某些用户代码包装了该异常
+            // 并抛出了其他内容。无论如何，我们将其视为 fetch failure。
             val fetchFailedCls = classOf[FetchFailedException].getName
             logWarning(s"$taskName encountered a ${fetchFailedCls} and " +
               s"failed, but the ${fetchFailedCls} was hidden by another " +
@@ -727,22 +702,19 @@ private[spark] class Executor(
           execBackend.statusUpdate(taskId, TaskState.KILLED, ser.serialize(reason))
 
         case t: Throwable if env.isStopped =>
-          // Log the expected exception after executor.stop without stack traces
-          // see: SPARK-19147
+          // 在 executor.stop 后记录预期的异常，不带堆栈跟踪
+          // 参见：SPARK-19147
           logError(s"Exception in $taskName: ${t.getMessage}")
 
         case t: Throwable =>
-          // Attempt to exit cleanly by informing the driver of our failure.
-          // If anything goes wrong (or this was a fatal exception), we will delegate to
-          // the default uncaught exception handler, which will terminate the Executor.
+          // 尝试通过通知驱动程序我们的失败来干净地退出。
+          // 如果出现任何问题（或这是一个致命异常），我们将委托给默认的未捕获异常处理器，它将终止执行器。
           logError(s"Exception in $taskName", t)
 
-          // SPARK-20904: Do not report failure to driver if if happened during shut down. Because
-          // libraries may set up shutdown hooks that race with running tasks during shutdown,
-          // spurious failures may occur and can result in improper accounting in the driver (e.g.
-          // the task failure would not be ignored if the shutdown happened because of preemption,
-          // instead of an app issue).
           if (!ShutdownHookManager.inShutdown()) {
+            // SPARK-20904：如果在关闭期间发生，不要向驱动程序报告失败。
+            // 因为库可能会设置在关闭期间与正在运行的任务竞争的关闭钩子，可能会发生虚假失败，
+            // 并可能导致驱动程序中的不当计数（例如如果关闭是由于抢占而不是应用程序问题发生的，任务失败将不会被忽略）。
             val (accums, accUpdates) = collectAccumulatorsAndResetStatusOnFailure(taskStartTimeNs)
             val metricPeaks = WrappedArray.make(metricsPoller.getTaskMetricPeaks(taskId))
 
@@ -753,7 +725,7 @@ private[spark] class Executor(
                 (ef, ser.serialize(ef))
               } catch {
                 case _: NotSerializableException =>
-                  // t is not serializable so just send the stacktrace
+                  // t 不可序列化，所以只发送堆栈跟踪
                   val ef = new ExceptionFailure(t, accUpdates, false).withAccums(accums)
                     .withMetricPeaks(metricPeaks.toSeq)
                   (ef, ser.serialize(ef))
@@ -765,17 +737,15 @@ private[spark] class Executor(
           } else {
             logInfo("Not reporting error to driver during JVM shutdown.")
           }
-
-          // Don't forcibly exit unless the exception was inherently fatal, to avoid
-          // stopping other tasks unnecessarily.
+          // 不要强制退出，除非异常本质上是致命的，以避免不必要地停止其他任务。
           if (Executor.isFatalError(t, killOnFatalErrorDepth)) {
             uncaughtExceptionHandler.uncaughtException(Thread.currentThread(), t)
           }
       } finally {
         runningTasks.remove(taskId)
         if (taskStarted) {
-          // This means the task was successfully deserialized, its stageId and stageAttemptId
-          // are known, and metricsPoller.onTaskStart was called.
+          // 这意味着任务已成功反序列化，其 stageId 和 stageAttemptId
+          // 已知，并且调用了 metricsPoller.onTaskStart。
           metricsPoller.onTaskCompletion(taskId, task.stageId, task.stageAttemptId)
         }
       }
@@ -788,10 +758,10 @@ private[spark] class Executor(
 
   private def setMDCForTask(taskName: String, mdc: Seq[(String, String)]): Unit = {
     try {
-      // make sure we run the task with the user-specified mdc properties only
+      // 确保我们仅使用用户指定的 mdc 属性运行任务
       MDC.clear()
       mdc.foreach { case (key, value) => MDC.put(key, value) }
-      // avoid overriding the takName by the user
+      // 避免用户覆盖 taskName
       MDC.put("mdc.taskName", taskName)
     } catch {
       case _: NoSuchFieldError => logInfo("MDC is not supported.")
@@ -799,27 +769,27 @@ private[spark] class Executor(
   }
 
   /**
-   * Supervises the killing / cancellation of a task by sending the interrupted flag, optionally
-   * sending a Thread.interrupt(), and monitoring the task until it finishes.
+   * 通过发送中断标志、可选地
+   * 发送 Thread.interrupt() 并监控任务直到完成来监督任务的终止/取消。
    *
-   * Spark's current task cancellation / task killing mechanism is "best effort" because some tasks
-   * may not be interruptible or may not respond to their "killed" flags being set. If a significant
-   * fraction of a cluster's task slots are occupied by tasks that have been marked as killed but
-   * remain running then this can lead to a situation where new jobs and tasks are starved of
-   * resources that are being used by these zombie tasks.
+   * Spark 当前的任务取消/任务终止机制是"尽力而为"的，因为某些任务
+   * 可能无法中断或可能不响应其"已终止"标志的设置。如果集群的任务槽中有相当大的
+   * 一部分被标记为已终止但仍在运行的任务占用，
+   * 则这可能导致新作业和任务缺乏
+   * 这些僵尸任务正在使用的资源的情况。
    *
-   * The TaskReaper was introduced in SPARK-18761 as a mechanism to monitor and clean up zombie
-   * tasks. For backwards-compatibility / backportability this component is disabled by default
-   * and must be explicitly enabled by setting `spark.task.reaper.enabled=true`.
+   * TaskReaper 在 SPARK-18761 中引入，作为监控和清理僵尸
+   * 任务的机制。为了向后兼容/可移植性，此组件默认禁用，
+   * 必须通过设置 `spark.task.reaper.enabled=true` 显式启用。
    *
-   * A TaskReaper is created for a particular task when that task is killed / cancelled. Typically
-   * a task will have only one TaskReaper, but it's possible for a task to have up to two reapers
-   * in case kill is called twice with different values for the `interrupt` parameter.
+   * 当任务被终止/取消时，会为该特定任务创建 TaskReaper。通常
+   * 一个任务只有一个 TaskReaper，但如果使用不同的 `interrupt` 参数值
+   * 两次调用 kill，则一个任务可能有多达两个 reapers。
    *
-   * Once created, a TaskReaper will run until its supervised task has finished running. If the
-   * TaskReaper has not been configured to kill the JVM after a timeout (i.e. if
-   * `spark.task.reaper.killTimeout < 0`) then this implies that the TaskReaper may run indefinitely
-   * if the supervised task never exits.
+   * 一旦创建，TaskReaper 将运行直到其监督的任务完成运行。如果
+   * TaskReaper 未配置为在超时后终止 JVM（即如果
+   * `spark.task.reaper.killTimeout < 0`），则这意味着如果监督的任务永远不退出，
+   * TaskReaper 可能会无限期运行。
    */
   private class TaskReaper(
       taskRunner: TaskRunner,
@@ -843,20 +813,20 @@ private[spark] class Executor(
       def elapsedTimeNs = System.nanoTime() - startTimeNs
       def timeoutExceeded(): Boolean = killTimeoutNs > 0 && elapsedTimeNs > killTimeoutNs
       try {
-        // Only attempt to kill the task once. If interruptThread = false then a second kill
-        // attempt would be a no-op and if interruptThread = true then it may not be safe or
-        // effective to interrupt multiple times:
+        // 只尝试终止任务一次。如果 interruptThread = false，则第二次终止
+        // 尝试将是无操作，如果 interruptThread = true，则多次中断可能不安全或
+        // 有效：
         taskRunner.kill(interruptThread = interruptThread, reason = reason)
-        // Monitor the killed task until it exits. The synchronization logic here is complicated
-        // because we don't want to synchronize on the taskRunner while possibly taking a thread
-        // dump, but we also need to be careful to avoid races between checking whether the task
-        // has finished and wait()ing for it to finish.
+        // 监控已终止的任务直到它退出。这里的同步逻辑很复杂
+        // 因为我们不想在可能获取线程转储时在 taskRunner 上同步，
+        // 但我们还需要小心避免在检查任务是否
+        // 已完成和 wait() 等待它完成之间的竞争。
         var finished: Boolean = false
         while (!finished && !timeoutExceeded()) {
           taskRunner.synchronized {
-            // We need to synchronize on the TaskRunner while checking whether the task has
-            // finished in order to avoid a race where the task is marked as finished right after
-            // we check and before we call wait().
+            // 我们需要在 TaskRunner 上同步，同时检查任务是否
+            // 已完成，以避免在我们检查之后任务被标记为已完成
+            // 但在我们调用 wait() 之前的竞争。
             if (taskRunner.isFinished) {
               finished = true
             } else {
@@ -889,23 +859,23 @@ private[spark] class Executor(
             logError(s"Killed task $taskId could not be stopped within $killTimeoutMs ms; " +
               "not killing JVM because we are running in local mode.")
           } else {
-            // In non-local-mode, the exception thrown here will bubble up to the uncaught exception
-            // handler and cause the executor JVM to exit.
+            // 在非本地模式下，这里抛出的异常将冒泡到未捕获异常
+            // 处理器并导致执行器 JVM 退出。
             throw new SparkException(
               s"Killing executor JVM because killed task $taskId could not be stopped within " +
                 s"$killTimeoutMs ms.")
           }
         }
       } finally {
-        // Clean up entries in the taskReaperForTask map.
+        // 清理 taskReaperForTask 映射中的条目。
         taskReaperForTask.synchronized {
           taskReaperForTask.get(taskId).foreach { taskReaperInMap =>
             if (taskReaperInMap eq this) {
               taskReaperForTask.remove(taskId)
             } else {
-              // This must have been a TaskReaper where interruptThread == false where a subsequent
-              // killTask() call for the same task had interruptThread == true and overwrote the
-              // map entry.
+              // 这必定是一个 interruptThread == false 的 TaskReaper，其中对同一任务的后续
+              // killTask() 调用具有 interruptThread == true 并覆盖了
+              // 映射条目。
             }
           }
         }
@@ -914,25 +884,26 @@ private[spark] class Executor(
   }
 
   /**
-   * Create a ClassLoader for use in tasks, adding any JARs specified by the user or any classes
-   * created by the interpreter to the search path
+   * 创建用于任务的 ClassLoader，添加用户指定的任何 JAR 或解释器创建的任何类到搜索路径
    */
   private def createClassLoader(): MutableURLClassLoader = {
-    // Bootstrap the list of jars with the user class path.
+    // 使用用户类路径引导 jar 列表。
     val now = System.currentTimeMillis()
+
+    // 获取用户上传的JAR包
     userClassPath.foreach { url =>
       currentJars(url.getPath().split("/").last) = now
     }
 
+    // 当前JVM 默认的类加载器
     val currentLoader = Utils.getContextOrSparkClassLoader
 
-    // For each of the jars in the jarSet, add them to the class loader.
-    // We assume each of the files has already been fetched.
     val urls = userClassPath.toArray ++ currentJars.keySet.map { uri =>
       new File(uri.split("/").last).toURI.toURL
     }
-    logInfo(s"Starting executor with user classpath (userClassPathFirst = $userClassPathFirst): " +
-        urls.mkString("'", ",", "'"))
+
+    logInfo(s"Starting executor with user classpath (userClassPathFirst = $userClassPathFirst): " + urls.mkString("'", ",", "'"))
+
     if (userClassPathFirst) {
       new ChildFirstURLClassLoader(urls, currentLoader)
     } else {
@@ -941,8 +912,8 @@ private[spark] class Executor(
   }
 
   /**
-   * If the REPL is in use, add another ClassLoader that will read
-   * new classes defined by the REPL as the user types code
+   * 如果正在使用 REPL，添加另一个 ClassLoader，它将读取
+   * 用户输入代码时 REPL 定义的新类
    */
   private def addReplClassLoaderIfNeeded(parent: ClassLoader): ClassLoader = {
     val classUri = conf.get("spark.repl.class.uri", null)
@@ -967,8 +938,8 @@ private[spark] class Executor(
   }
 
   /**
-   * Download any missing dependencies if we receive a new set of files and JARs from the
-   * SparkContext. Also adds any new JARs we fetched to the class loader.
+   * 如果我们从 SparkContext 接收到新的文件和 JAR 集合，则下载任何缺失的依赖。
+   * 还将我们获取的任何新 JAR 添加到类加载器。
    */
   private def updateDependencies(
       newFiles: Map[String, Long],
@@ -976,10 +947,10 @@ private[spark] class Executor(
       newArchives: Map[String, Long]): Unit = {
     lazy val hadoopConf = SparkHadoopUtil.get.newConfiguration(conf)
     synchronized {
-      // Fetch missing dependencies
+      // 获取缺失的依赖
       for ((name, timestamp) <- newFiles if currentFiles.getOrElse(name, -1L) < timestamp) {
         logInfo(s"Fetching $name with timestamp $timestamp")
-        // Fetch file with useCache mode, close cache for local mode.
+        // 使用 useCache 模式获取文件，为本地模式关闭缓存。
         Utils.fetchFile(name, new File(SparkFiles.getRootDirectory()), conf,
           hadoopConf, timestamp, useCache = !isLocal)
         currentFiles(name) = timestamp
@@ -1006,11 +977,11 @@ private[spark] class Executor(
           .getOrElse(-1L)
         if (currentTimeStamp < timestamp) {
           logInfo(s"Fetching $name with timestamp $timestamp")
-          // Fetch file with useCache mode, close cache for local mode.
+          // 使用 useCache 模式获取文件，为本地模式关闭缓存。
           Utils.fetchFile(name, new File(SparkFiles.getRootDirectory()), conf,
             hadoopConf, timestamp, useCache = !isLocal)
           currentJars(name) = timestamp
-          // Add it to our class loader
+          // 将其添加到我们的类加载器
           val url = new File(SparkFiles.getRootDirectory(), localName).toURI.toURL
           if (!urlClassLoader.getURLs().contains(url)) {
             logInfo(s"Adding $url to class loader")
@@ -1021,9 +992,9 @@ private[spark] class Executor(
     }
   }
 
-  /** Reports heartbeat and metrics for active tasks to the driver. */
+  /** 向驱动程序报告活动任务的心跳和指标。 */
   private def reportHeartBeat(): Unit = {
-    // list of (task id, accumUpdates) to send back to the driver
+    // 要发送回驱动程序的 (task id, accumUpdates) 列表
     val accumUpdates = new ArrayBuffer[(Long, Seq[AccumulatorV2[_, _]])]()
     val curGCTime = computeTotalGcTime()
 
@@ -1071,22 +1042,22 @@ private[spark] class Executor(
 }
 
 private[spark] object Executor {
-  // This is reserved for internal use by components that need to read task properties before a
-  // task is fully deserialized. When possible, the TaskContext.getLocalProperty call should be
-  // used instead.
+  // 这保留供需要在任务完全反序列化之前读取任务属性的组件内部使用。
+  // 如果可能，应使用 TaskContext.getLocalProperty 调用
+  // 代替。
   val taskDeserializationProps: ThreadLocal[Properties] = new ThreadLocal[Properties]
 
-  // Used to store executorSource, for local mode only
+  // 用于存储 executorSource，仅用于本地模式
   var executorSourceLocalModeOnly: ExecutorSource = null
 
   /**
-   * Whether a `Throwable` thrown from a task is a fatal error. We will use this to decide whether
-   * to kill the executor.
+   * 从任务抛出的 `Throwable` 是否为致命错误。我们将使用此来决定是否
+   * 终止执行器。
    *
-   * @param depthToCheck The max depth of the exception chain we should search for a fatal error. 0
-   *                     means not checking any fatal error (in other words, return false), 1 means
-   *                     checking only the exception but not the cause, and so on. This is to avoid
-   *                     `StackOverflowError` when hitting a cycle in the exception chain.
+   * @param depthToCheck 我们应该搜索致命错误的异常链的最大深度。0
+   *                     表示不检查任何致命错误（换句话说，返回 false），1 表示
+   *                     仅检查异常但不检查原因，依此类推。这是为了避免
+   *                     在异常链中遇到循环时出现 `StackOverflowError`。
    */
   @scala.annotation.tailrec
   def isFatalError(t: Throwable, depthToCheck: Int): Boolean = {

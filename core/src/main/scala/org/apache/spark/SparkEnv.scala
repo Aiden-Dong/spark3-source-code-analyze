@@ -58,17 +58,17 @@ import org.apache.spark.util.{RpcUtils, Utils}
 @DeveloperApi
 class SparkEnv (
     val executorId: String,
-    private[spark] val rpcEnv: RpcEnv,
-    val serializer: Serializer,
-    val closureSerializer: Serializer,
-    val serializerManager: SerializerManager,
-    val mapOutputTracker: MapOutputTracker,
-    val shuffleManager: ShuffleManager,
-    val broadcastManager: BroadcastManager,
-    val blockManager: BlockManager,
-    val securityManager: SecurityManager,
-    val metricsSystem: MetricsSystem,
-    val memoryManager: MemoryManager,
+    private[spark] val rpcEnv: RpcEnv,             // 通信接口
+    val serializer: Serializer,                    // 数据序列化器
+    val closureSerializer: Serializer,             // 闭包序列化器
+    val serializerManager: SerializerManager,      // 序列化工具
+    val mapOutputTracker: MapOutputTracker,        // Shuffle输出跟踪器
+    val shuffleManager: ShuffleManager,            // Shufffle 管理器
+    val broadcastManager: BroadcastManager,        // 广播管理
+    val blockManager: BlockManager,                // 块管理器
+    val securityManager: SecurityManager,          // 安全管理
+    val metricsSystem: MetricsSystem,              // 指标系统
+    val memoryManager: MemoryManager,              // 内存管理
     val outputCommitCoordinator: OutputCommitCoordinator,
     val conf: SparkConf) extends Logging {
 

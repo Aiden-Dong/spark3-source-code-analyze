@@ -46,8 +46,7 @@ case class ParquetWrite(
 
     val conf = ContextUtil.getConfiguration(job)
 
-    val committerClass =
-      conf.getClass(
+    val committerClass = conf.getClass(
         SQLConf.PARQUET_OUTPUT_COMMITTER_CLASS.key,
         classOf[ParquetOutputCommitter],
         classOf[OutputCommitter])

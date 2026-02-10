@@ -201,32 +201,32 @@ class SparkContext(config: SparkConf) extends Logging {
    | constructor is still running is safe.                                                 |
    * ------------------------------------------------------------------------------------- */
 
-  private var _conf: SparkConf = _
-  private var _eventLogDir: Option[URI] = None
+  private var _conf: SparkConf = _                                                    // spark 任务配置
+  private var _eventLogDir: Option[URI] = None                                        // 事件日志路径
   private var _eventLogCodec: Option[String] = None
-  private var _listenerBus: LiveListenerBus = _
-  private var _env: SparkEnv = _
+  private var _listenerBus: LiveListenerBus = _                                       // 事件通知总线
+  private var _env: SparkEnv = _                                                      // Spark 环境(重要)
   private var _statusTracker: SparkStatusTracker = _
   private var _progressBar: Option[ConsoleProgressBar] = None
-  private var _ui: Option[SparkUI] = None
-  private var _hadoopConfiguration: Configuration = _
+  private var _ui: Option[SparkUI] = None                                             // 页面渲染
+  private var _hadoopConfiguration: Configuration = _                                 // hadoop configuration
   private var _executorMemory: Int = _
-  private var _schedulerBackend: SchedulerBackend = _
-  private var _taskScheduler: TaskScheduler = _
+  private var _schedulerBackend: SchedulerBackend = _                                 // 分布式资源调度后端
+  private var _taskScheduler: TaskScheduler = _                                       // 任务调度管理
   private var _heartbeatReceiver: RpcEndpointRef = _
-  @volatile private var _dagScheduler: DAGScheduler = _
+  @volatile private var _dagScheduler: DAGScheduler = _                               // 作业调度管理
   private var _applicationId: String = _
   private var _applicationAttemptId: Option[String] = None
   private var _eventLogger: Option[EventLoggingListener] = None
   private var _driverLogger: Option[DriverLogger] = None
-  private var _executorAllocationManager: Option[ExecutorAllocationManager] = None
+  private var _executorAllocationManager: Option[ExecutorAllocationManager] = None    // Executor 弹性伸缩管理
   private var _cleaner: Option[ContextCleaner] = None
   private var _listenerBusStarted: Boolean = false
-  private var _jars: Seq[String] = _
-  private var _files: Seq[String] = _
-  private var _archives: Seq[String] = _
-  private var _shutdownHookRef: AnyRef = _
-  private var _statusStore: AppStatusStore = _
+  private var _jars: Seq[String] = _                                                    // --jars
+  private var _files: Seq[String] = _                                                   // --files
+  private var _archives: Seq[String] = _                                                // --archives
+  private var _shutdownHookRef: AnyRef = _                                              // 任务停止回调
+  private var _statusStore: AppStatusStore = _                                          // 任务状态存储 (对接webUI)
   private var _heartbeater: Heartbeater = _
   private var _resources: immutable.Map[String, ResourceInformation] = _
   private var _shuffleDriverComponents: ShuffleDriverComponents = _
