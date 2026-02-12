@@ -28,22 +28,17 @@ import org.apache.spark.sql.types.{AbstractDataType, AnyDataType, DataType}
 import org.apache.spark.util.Utils
 
 /**
- * User-defined function.
- * @param function  The user defined scala function to run.
- *                  Note that if you use primitive parameters, you are not able to check if it is
- *                  null or not, and the UDF will return null for you if the primitive input is
- *                  null. Use boxed type or [[Option]] if you wanna do the null-handling yourself.
- * @param dataType  Return type of function.
- * @param children  The input expressions of this UDF.
- * @param inputEncoders ExpressionEncoder for each input parameters. For a input parameter which
- *                      serialized as struct will use encoder instead of CatalystTypeConverters to
- *                      convert internal value to Scala value.
- * @param outputEncoder ExpressionEncoder for the return type of function. It's only defined when
- *                      this is a typed Scala UDF.
- * @param udfName  The user-specified name of this UDF.
- * @param nullable  True if the UDF can return null value.
- * @param udfDeterministic  True if the UDF is deterministic. Deterministic UDF returns same result
- *                          each time it is invoked with a particular input.
+ * 用户自定义函数。
+ * @param function  要运行的用户定义的 scala 函数。
+ *                  注意，如果使用原始类型参数，则无法检查它是否为 null， 如果原始输入为 null，UDF 将为您返回 null。
+ *                  如果您想自己处理 null，请使用包装类型或 [[Option]]。
+ * @param dataType  函数的返回类型。
+ * @param children  此 UDF 的输入表达式。
+ * @param inputEncoders 每个输入参数的 ExpressionEncoder。对于序列化为结构体的输入参数，将使用编码器而不是 CatalystTypeConverters 将内部值转换为 Scala 值。
+ * @param outputEncoder 函数返回类型的 ExpressionEncoder。仅在这是类型化 Scala UDF 时定义。
+ * @param udfName  此 UDF 的用户指定名称。
+ * @param nullable  如果 UDF 可以返回 null 值，则为 true。
+ * @param udfDeterministic  如果 UDF 是确定性的，则为 true。确定性 UDF 在每次使用特定输入调用时都会返回相同的结果。
  */
 case class ScalaUDF(
     function: AnyRef,
@@ -65,51 +60,45 @@ case class ScalaUDF(
   override def name: String = udfName.getOrElse("UDF")
 
   override lazy val canonicalized: Expression = {
-    // SPARK-32307: `ExpressionEncoder` can't be canonicalized, and technically we don't
-    // need it to identify a `ScalaUDF`.
+    // SPARK-32307: `ExpressionEncoder` 无法被规范化，从技术上讲，
+    // 我们不需要它来识别 `ScalaUDF`。
     copy(children = children.map(_.canonicalized), inputEncoders = Nil, outputEncoder = None)
   }
 
   /**
-   * The analyzer should be aware of Scala primitive types so as to make the
-   * UDF return null if there is any null input value of these types. On the
-   * other hand, Java UDFs can only have boxed types, thus this will return
-   * Nil(has same effect with all false) and analyzer will skip null-handling
-   * on them.
+   * 分析器应该了解 Scala 原始类型，以便在这些类型的任何输入值为 null 时使 UDF 返回 null。
+   * 另一方面，Java UDF 只能有包装类型， 因此这将返回 Nil（与全部为 false 具有相同效果），分析器将跳过对它们的 null 处理。
    */
-  lazy val inputPrimitives: Seq[Boolean] = {
+  lazy val inputPrimitives: Seq[Boolean] = {       // 判断是不是原始类型
     inputEncoders.map { encoderOpt =>
-      // It's possible that some of the inputs don't have a specific encoder(e.g. `Any`)
+      // 某些输入可能没有特定的编码器（例如 `Any`）
       if (encoderOpt.isDefined) {
         val encoder = encoderOpt.get
-        if (encoder.isSerializedAsStruct) {
-          // struct type is not primitive
+        if (encoder.isSerializedAsStruct) {     // 结构体类型不是原始类型
           false
-        } else {
-          // `nullable` is false iff the type is primitive
+        } else {                                // `nullable` 为 false 当且仅当类型是原始类型
           !encoder.schema.head.nullable
         }
-      } else {
-        // Any type is not primitive
+      } else {                                  // // Any 类型不是原始类型
         false
       }
     }
   }
 
   /**
-   * The expected input types of this UDF, used to perform type coercion. If we do
-   * not want to perform coercion, simply use "Nil". Note that it would've been
-   * better to use Option of Seq[DataType] so we can use "None" as the case for no
-   * type coercion. However, that would require more refactoring of the codebase.
+   * 此 UDF 的预期输入类型，用于执行类型强制转换。
+   * 如果我们不想执行强制转换， 只需使用 "Nil"。
+   * 请注意，使用 Option of Seq[DataType] 会更好， 这样我们可以使用 "None" 作为不进行类型强制转换的情况。
+   * 但是，这需要对代码库进行更多重构。
    */
-  def inputTypes: Seq[AbstractDataType] = {
+  def inputTypes: Seq[AbstractDataType] = {     // 获取输入数据类型
     inputEncoders.map { encoderOpt =>
       if (encoderOpt.isDefined) {
         val encoder = encoderOpt.get
-        if (encoder.isSerializedAsStruct) {
+        if (encoder.isSerializedAsStruct) {   // 表示如果是结构体类型
           encoder.schema
         } else {
-          encoder.schema.head.dataType
+          encoder.schema.head.dataType        // 非结构体类型
         }
       } else {
         AnyDataType
@@ -118,14 +107,16 @@ case class ScalaUDF(
   }
 
   /**
-   * Create the converter which converts the scala data type to the catalyst data type for
-   * the return data type of udf function. We'd use `ExpressionEncoder` to create the
-   * converter for typed ScalaUDF only, since its the only case where we know the type tag
-   * of the return data type of udf function.
+   * 输出数据处理 : 把 scala 类型的输出变量转义成 InternalRow
+   *
+   * 创建转换器，将 scala 数据类型转换为 catalyst 数据类型， 用于 udf 函数的返回数据类型。
+   * 我们仅对类型化 ScalaUDF 使用 `ExpressionEncoder`来创建转换器，因为这是我们知道 udf 函数返回数据类型的类型标签的唯一情况。
    */
   private def catalystConverter: Any => Any = outputEncoder.map { enc =>
-    val toRow = enc.createSerializer().asInstanceOf[Any => Any]
-    if (enc.isSerializedAsStructForTopLevel) {
+
+    val toRow = enc.createSerializer().asInstanceOf[Any => Any]  // 获取输出类型序列化器
+
+    if (enc.isSerializedAsStructForTopLevel) {    // 是否是结构体并可以展平
       value: Any =>
         if (value == null) null else toRow(value).asInstanceOf[InternalRow]
     } else {
@@ -135,28 +126,32 @@ case class ScalaUDF(
   }.getOrElse(createToCatalystConverter(dataType))
 
   /**
-   * Create the converter which converts the catalyst data type to the scala data type.
-   * We use `CatalystTypeConverters` to create the converter for:
-   *   - UDF which doesn't provide inputEncoders, e.g., untyped Scala UDF and Java UDF
-   *   - type which isn't supported by `ExpressionEncoder`, e.g., Any
-   *   - primitive types, in order to use `identity` for better performance
-   * For other cases like case class, Option[T], we use `ExpressionEncoder` instead since
-   * `CatalystTypeConverters` doesn't support these data types.
+   * 输入数据处理
    *
-   * @param i the index of the child
-   * @param dataType the output data type of the i-th child
-   * @return the converter and a boolean value to indicate whether the converter is
-   *         created by using `ExpressionEncoder`.
+   * 创建转换器，将 catalyst 数据类型转换为 scala 数据类型。
+   * 我们使用 `CatalystTypeConverters` 为以下情况创建转换器：
+   *   - 不提供 inputEncoders 的 UDF，例如无类型 Scala UDF 和 Java UDF
+   *   - `ExpressionEncoder` 不支持的类型，例如 Any
+   *   - 原始类型，为了使用 `identity` 以获得更好的性能
+   * 对于其他情况，如 case class、Option[T]，我们使用 `ExpressionEncoder`，
+   * 因为 `CatalystTypeConverters` 不支持这些数据类型。
+   *
+   * @param i 子节点的索引
+   * @param dataType 第 i 个子节点的输出数据类型
+   * @return 转换器和一个布尔值，指示转换器是否是使用 `ExpressionEncoder` 创建的。
    */
   private def scalaConverter(i: Int, dataType: DataType): (Any => Any, Boolean) = {
+
     val useEncoder =
-      !(inputEncoders.isEmpty || // for untyped Scala UDF and Java UDF
-      inputEncoders(i).isEmpty || // for types aren't supported by encoder, e.g. Any
-      inputPrimitives(i)) // for primitive types
+      !(inputEncoders.isEmpty ||   // 对于无类型 Scala UDF 和 Java UDF
+      inputEncoders(i).isEmpty ||  // 对于编码器不支持的类型，例如 Any
+      inputPrimitives(i))          // 对于原始类型
 
     if (useEncoder) {
-      val enc = inputEncoders(i).get
-      val fromRow = enc.createDeserializer()
+      val enc = inputEncoders(i).get                  // 获取对应列的反序列化类型
+      val fromRow = enc.createDeserializer()          // 创建反序列化方法 InternalRow -> object
+
+      // 反序列化方法
       val converter = if (enc.isSerializedAsStructForTopLevel) {
         row: Any => fromRow(row.asInstanceOf[InternalRow])
       } else {
@@ -164,7 +159,7 @@ case class ScalaUDF(
         value: Any => inputRow.update(0, value); fromRow(inputRow)
       }
       (converter, true)
-    } else { // use CatalystTypeConverters
+    } else { // 使用 CatalystTypeConverters
       (catalystCreateToScalaConverter(dataType), false)
     }
   }
@@ -174,26 +169,26 @@ case class ScalaUDF(
 
   // scalastyle:off line.size.limit
 
-  /** This method has been generated by this script
+  /** 此方法由以下脚本生成
 
-    (1 to 22).map { x =>
-      val anys = (1 to x).map(x => "Any").reduce(_ + ", " + _)
-      val childs = (0 to x - 1).map(x => s"val child$x = children($x)").reduce(_ + "\n  " + _)
-      val converters = (0 to x - 1).map(x => s"lazy val converter$x = createToScalaConverter($x, child$x.dataType)").reduce(_ + "\n  " + _)
-      val evals = (0 to x - 1).map(x => s"converter$x(child$x.eval(input))").reduce(_ + ",\n      " + _)
+   (1 to 22).map { x =>
+   val anys = (1 to x).map(x => "Any").reduce(_ + ", " + _)
+   val childs = (0 to x - 1).map(x => s"val child$x = children($x)").reduce(_ + "\n  " + _)
+   val converters = (0 to x - 1).map(x => s"lazy val converter$x = createToScalaConverter($x, child$x.dataType)").reduce(_ + "\n  " + _)
+   val evals = (0 to x - 1).map(x => s"converter$x(child$x.eval(input))").reduce(_ + ",\n      " + _)
 
-      s"""case $x =>
-      val func = function.asInstanceOf[($anys) => Any]
+   s"""case $x =>
+   val func = function.asInstanceOf[($anys) => Any]
       $childs
       $converters
       (input: InternalRow) => {
-        func(
+   func(
           $evals)
-      }
-      """
-    }.foreach(println)
+   }
+   """
+   }.foreach(println)
 
-  */
+   */
   private[this] val f = children.size match {
     case 0 =>
       val func = function.asInstanceOf[() => Any]
@@ -203,10 +198,12 @@ case class ScalaUDF(
 
     case 1 =>
       val func = function.asInstanceOf[(Any) => Any]
-      val child0 = children(0)
+      val child0 = children(0)   // 获取子列表达式
+
       lazy val converter0 = createToScalaConverter(0, child0.dataType)
       (input: InternalRow) => {
         func(
+
           converter0(child0.eval(input)))
       }
 
@@ -1099,7 +1096,7 @@ case class ScalaUDF(
       ev: ExprCode): ExprCode = {
     val converterClassName = classOf[Any => Any].getName
 
-    // The type converters for inputs and the result
+    // 输入和结果的类型转换器
     val (converters, useEncoders): (Array[Any => Any], Array[Boolean]) =
       (children.zipWithIndex.map { case (c, i) =>
         scalaConverter(i, c.dataType)
@@ -1107,20 +1104,20 @@ case class ScalaUDF(
     val convertersTerm = ctx.addReferenceObj("converters", converters, s"$converterClassName[]")
     val resultTerm = ctx.freshName("result")
 
-    // codegen for children expressions
+    // 为子表达式生成代码
     val evals = children.map(_.genCode(ctx))
 
-    // Generate the codes for expressions and calling user-defined function
-    // We need to get the boxedType of dataType's javaType here. Because for the dataType
-    // such as IntegerType, its javaType is `int` and the returned type of user-defined
-    // function is Object. Trying to convert an Object to `int` will cause casting exception.
+    // 生成表达式和调用用户定义函数的代码
+    // 我们需要在这里获取 dataType 的 javaType 的 boxedType。因为对于像
+    // IntegerType 这样的 dataType，它的 javaType 是 `int`，而用户定义
+    // 函数的返回类型是 Object。尝试将 Object 转换为 `int` 会导致转换异常。
     val evalCode = evals.map(_.code).mkString("\n")
     val (funcArgs, initArgs) = evals.zipWithIndex.zip(children.map(_.dataType)).map {
       case ((eval, i), dt) =>
         val argTerm = ctx.freshName("arg")
-        // Check `inputPrimitives` when it's not empty in order to figure out the Option
-        // type as non primitive type, e.g., Option[Int]. Fall back to `isPrimitive` when
-        // `inputPrimitives` is empty for other cases, e.g., Java UDF, untyped Scala UDF
+        // 检查 `inputPrimitives` 当它不为空时，以便找出 Option
+        // 类型作为非原始类型，例如 Option[Int]。当 `inputPrimitives` 为空时
+        // 回退到 `isPrimitive`，用于其他情况，例如 Java UDF、无类型 Scala UDF
         val primitive = (inputPrimitives.isEmpty && isPrimitive(dt)) ||
           (inputPrimitives.nonEmpty && inputPrimitives(i))
         val initArg = if (primitive) {
@@ -1150,7 +1147,7 @@ case class ScalaUDF(
     val boxedType = CodeGenerator.boxedType(dataType)
 
     val funcInvocation = if (isPrimitive(dataType)
-        // If the output is nullable, the returned value must be unwrapped from the Option
+      // 如果输出可为空，则返回值必须从 Option 中解包
         && !nullable) {
       s"$resultTerm = ($boxedType)$getFuncResult"
     } else {

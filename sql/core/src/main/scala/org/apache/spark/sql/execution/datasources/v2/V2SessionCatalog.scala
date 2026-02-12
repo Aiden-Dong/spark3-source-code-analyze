@@ -37,7 +37,9 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
- * A [[TableCatalog]] that translates calls to the v1 SessionCatalog.
+ * • [[V2SessionCatalog]] 是**适配器/包装器**，将旧的 [[SessionCatalog]] 适配到新的 [[DataSource]] V2 API
+ * • [[SessionCatalog]] 是 Spark 传统的元数据管理组件（V1）
+ * • [[V2SessionCatalog]] 实现了 V2 的 [[TableCatalog]] 和 [[FunctionCatalog]] 接口，内部委托给 [[SessionCatalog]]
  */
 class V2SessionCatalog(catalog: SessionCatalog)
   extends TableCatalog with FunctionCatalog with SupportsNamespaces with SQLConfHelper {
@@ -161,9 +163,12 @@ class V2SessionCatalog(catalog: SessionCatalog)
 
     try {
       catalog.alterTable(
-        catalogTable.copy(
-          properties = properties, schema = schema, owner = owner, comment = comment,
-          storage = storage))
+        catalogTable.copy(properties = properties,
+          schema = schema,
+          owner = owner,
+          comment = comment,
+          storage = storage)
+      )
     } catch {
       case _: NoSuchTableException =>
         throw QueryCompilationErrors.noSuchTableError(ident)
@@ -175,10 +180,7 @@ class V2SessionCatalog(catalog: SessionCatalog)
   override def dropTable(ident: Identifier): Boolean = {
     try {
       if (loadTable(ident) != null) {
-        catalog.dropTable(
-          ident.asTableIdentifier,
-          ignoreIfNotExists = true,
-          purge = true /* skip HDFS trash */)
+        catalog.dropTable(ident.asTableIdentifier, ignoreIfNotExists = true, purge = true /* skip HDFS trash */)
         true
       } else {
         false

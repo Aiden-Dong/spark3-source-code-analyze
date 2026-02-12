@@ -56,15 +56,12 @@ private[hive] case class HiveSimpleUDF(
 
   override def nullable: Boolean = true
 
-  @transient
-  lazy val function = funcWrapper.createFunction[UDF]()
-
-  @transient
-  private lazy val method =
-    function.getResolver.getEvalMethod(children.map(_.dataType.toTypeInfo).asJava)
-
-  @transient
-  private lazy val arguments = children.map(toInspector).toArray
+  // 函数类实体
+  @transient lazy val function = funcWrapper.createFunction[UDF]()
+  // udf.evaluate(....)
+  @transient private lazy val method = function.getResolver.getEvalMethod(children.map(_.dataType.toTypeInfo).asJava)
+  // evaluate 执行参数
+  @transient private lazy val arguments = children.map(toInspector).toArray
 
   @transient
   private lazy val isUDFDeterministic = {

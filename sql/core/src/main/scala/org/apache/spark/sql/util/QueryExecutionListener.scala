@@ -85,6 +85,7 @@ class ExecutionListenerManager private[sql](
 
   if (loadExtensions) {
     val conf = session.sparkContext.conf
+    // spark.sql.queryExecutionListeners
     conf.get(QUERY_EXECUTION_LISTENERS).foreach { classNames =>
       SQLConf.withExistingConf(sqlConf) {
         Utils.loadExtensions(classOf[QueryExecutionListener], classNames, conf).foreach(register)

@@ -22,14 +22,11 @@ import java.util.Locale
 import java.util.concurrent.Callable
 import java.util.concurrent.TimeUnit
 import javax.annotation.concurrent.GuardedBy
-
 import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
-
 import com.google.common.cache.{Cache, CacheBuilder}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst._
@@ -53,44 +50,27 @@ object SessionCatalog {
 }
 
 /**
- * 一个由 Spark 会话使用的内部目录。这个内部目录充当底层元数据存储（例如 Hive 元数据存储）的代理，
- * 它还管理所属 Spark 会话的临时视图和函数。
+ * 一个由 Spark 会话使用的内部目录。这个内部目录充当底层元数据存储（例如 Hive 元数据存储）的代理，它还管理所属 Spark 会话的临时视图和函数。
  *
- * Spark SQL 中的 Catalog 体系实现以 SessionCatalog 为主体，
- * 通过 SparkSession (Spark 程序入口）提供给外部调用。一般一个 SparkSession 对应一个 SessionCatalog。
+ * Spark SQL 中的 Catalog 体系实现以 SessionCatalog 为主体，通过 SparkSession (Spark 程序入口）提供给外部调用。
+ * 一般一个 SparkSession 对应一个 SessionCatalog。
+ *
  * 本质上，Session Catalog 起到了一个代理的作用，对底层的元数据信息、临时表信息、视图信息和函数信息进行了封装。
+ *
  * 这个类必须是线程安全的。
  */
-class SessionCatalog(
-    // 外部系统 Catalog
-    // 用来管理数据库（Databases）、数据表 （Tables）、数 据分区（Partitions）和函数（Functions）的接口 。
-    // 顾名思义，其目标是与外部系统交互， 并做到上述内容的非临时性存储，同样需要满足线程安全以支持并发访问。
-    // ExternalCatalog 是一个抽象类，定义了上述 4 个方面的功能。
-    // 在 Spark SQL 中，具体 实现有 InMemoryCatalog 和 HiveExternalCatalog 两种。
-    // 前者将上述信息存储在内存中， 一 般用于测试或比较简单的 SQL 处理；后者利用 Hive 元数据库来实现持久化的管理，在生 产环境中广泛应用
-    externalCatalogBuilder: () => ExternalCatalog,
-    // 全局的临时视图管理
-    // 对应 DataFrame 中常用的 createGlobalTemp View 方法，进行跨 Session 的视图管理。
-    // 主要功能依赖一个 mutable 类型的 HashMap 来对视图名和数 据源进行映射，
-    // 其中的 key 是视图名的字符串， value 是视图所对应的 LogicalPlan （一般在创建该视图时生成） 。
-    globalTempViewManagerBuilder: () => GlobalTempViewManager,
-    // 函数注册接口
-    // 用来实现对函数的注册 （Register）、查找（Lookup）和 删除（Drop） 等功能。
-    // 一般来讲， FunctionRegistry 的具体实现需要是线程安全的，以支持并发访问。
-    // 在 Spark SQL 中默认实现是 SimpleFunctionRegistry，其中采用 Map 数据结构注册了各种内置的函数。
-    functionRegistry: FunctionRegistry,
-    tableFunctionRegistry: TableFunctionRegistry,
-    hadoopConf: Configuration,
-    // parser为解析器接口.
-    // 在listFunctions(db: String, pattern: String)和lookupRelation(name: TableIdentifier)中被使用，用于对函数和表进行解析
-    parser: ParserInterface,
-    // 函数资源加载器
-    // 在 SparkSQL 中除内置实现的各种函数外，还 支持用户自定义的函数和 Hive 中的各种函数。
-    // 这些函数往往通过 Jar 包或文件类型提供， FunctionResourceLoader 主要就是用来加载这两种类型的资源以提供函数的调用。
-    functionResourceLoader: FunctionResourceLoader,
-    functionExpressionBuilder: FunctionExpressionBuilder,
-    cacheSize: Int = SQLConf.get.tableRelationCacheSize,
-    cacheTTL: Long = SQLConf.get.metadataCacheTTL) extends SQLConfHelper with Logging {
+class SessionCatalog(   /** => [[HiveSessionCatalog]] */
+    externalCatalogBuilder: () => ExternalCatalog,              // SparkSession.sharedState.externalCatalog [spark.sql.catalogImplementation ：  [hive, in-memory]]
+    globalTempViewManagerBuilder: () => GlobalTempViewManager,  // SparkSession.sharedState.globalTempViewManager
+    functionRegistry: FunctionRegistry,                         //** 函数注册   : [[SparkSessionExtensions.registerFunctions(FunctionRegistry.builtin.clone())]] */
+    tableFunctionRegistry: TableFunctionRegistry,               /** 表函数注册， 这些函数返回整个数据集 : SELECT * FROM range(1, 100); [[SparkSessionExtensions.registerTableFunctions(TableFunctionRegistry.builtin.clone())]] */
+    hadoopConf: Configuration,                                  // Hadoop 配置管理
+    parser: ParserInterface,                                    // SparkSession.buildParser(session, new SparkSqlParser())
+    functionResourceLoader: FunctionResourceLoader,             /** [[SessionResourceLoader]] */
+    functionExpressionBuilder: FunctionExpressionBuilder,       /** [[HiveUDFExpressionBuilder]] */
+    cacheSize: Int = SQLConf.get.tableRelationCacheSize,        // spark.sql.filesourceTableRelationCacheSize : 1000
+    cacheTTL: Long = SQLConf.get.metadataCacheTTL               // spark.sql.metadataCacheTTLSeconds : -1
+) extends SQLConfHelper with Logging {
   import SessionCatalog._
   import CatalogTypes.TablePartitionSpec
 
@@ -113,7 +93,6 @@ class SessionCatalog(
       conf.metadataCacheTTL)
   }
 
-  // For testing only.
   def this(
       externalCatalog: ExternalCatalog,
       functionRegistry: FunctionRegistry,
@@ -121,7 +100,6 @@ class SessionCatalog(
     this(externalCatalog, functionRegistry, new SimpleTableFunctionRegistry, conf)
   }
 
-  // For testing only.
   def this(
       externalCatalog: ExternalCatalog,
       functionRegistry: FunctionRegistry,
@@ -129,38 +107,26 @@ class SessionCatalog(
     this(externalCatalog, functionRegistry, tableFunctionRegistry, SQLConf.get)
   }
 
-  // For testing only.
   def this(externalCatalog: ExternalCatalog, functionRegistry: FunctionRegistry) = {
     this(externalCatalog, functionRegistry, SQLConf.get)
   }
 
-  // For testing only.
   def this(externalCatalog: ExternalCatalog) = {
     this(externalCatalog, new SimpleFunctionRegistry)
   }
 
-  lazy val externalCatalog = externalCatalogBuilder()
-  lazy val globalTempViewManager = globalTempViewManagerBuilder()
-
-  /** List of temporary views, mapping from table name to their logical plan. */
-  @GuardedBy("this")
-  protected val tempViews = new mutable.HashMap[String, TemporaryViewRelation]
-
-  // Note: we track current database here because certain operations do not explicitly
-  // specify the database (e.g. DROP TABLE my_table). In these cases we must first
-  // check whether the temporary view or function exists, then, if not, operate on
-  // the corresponding item in the current database.
-  @GuardedBy("this")
-  protected var currentDb: String = formatDatabaseName(DEFAULT_DATABASE)
+  lazy val externalCatalog = externalCatalogBuilder()                                                // SparkSession.sharedState.externalCatalog [spark.sql.catalogImplementation ：  [hive, in-memory]]
+  lazy val globalTempViewManager = globalTempViewManagerBuilder()                                    // 全局视图 : SparkSession.sharedState.globalTempViewManager
+  @GuardedBy("this") protected val tempViews = new mutable.HashMap[String, TemporaryViewRelation]    // 当前 session级别的视图
+  @GuardedBy("this") protected var currentDb: String = formatDatabaseName(DEFAULT_DATABASE)          // 当前数据库名字
 
   private val validNameFormat = "([\\w_]+)".r
 
   /**
-   * Checks if the given name conforms the Hive standard ("[a-zA-Z_0-9]+"),
-   * i.e. if this name only contains characters, numbers, and _.
+   * 检查给定名称是否符合 Hive 标准（"[a-zA-Z_0-9]+"），
+   * 即此名称是否仅包含字符、数字和下划线。
    *
-   * This method is intended to have the same behavior of
-   * org.apache.hadoop.hive.metastore.MetaStoreUtils.validateName.
+   * 此方法旨在与 org.apache.hadoop.hive.metastore.MetaStoreUtils.validateName 具有相同的行为。
    */
   private def validateName(name: String): Unit = {
     if (!validNameFormat.pattern.matcher(name).matches()) {
@@ -168,16 +134,12 @@ class SessionCatalog(
     }
   }
 
-  /**
-   * Format table name, taking into account case sensitivity.
-   */
+  /** 格式化表名，考虑大小写敏感性。 */
   protected[this] def formatTableName(name: String): String = {
     if (conf.caseSensitiveAnalysis) name else name.toLowerCase(Locale.ROOT)
   }
 
-  /**
-   * Format database name, taking into account case sensitivity.
-   */
+  /** 格式化表名，考虑大小写敏感性。 */
   protected[this] def formatDatabaseName(name: String): String = {
     if (conf.caseSensitiveAnalysis) name else name.toLowerCase(Locale.ROOT)
   }
@@ -193,43 +155,41 @@ class SessionCatalog(
     builder.build[QualifiedTableName, LogicalPlan]()
   }
 
-  /** This method provides a way to get a cached plan. */
+  /** 此方法提供了一种获取缓存计划的方式 */
   def getCachedPlan(t: QualifiedTableName, c: Callable[LogicalPlan]): LogicalPlan = {
     tableRelationCache.get(t, c)
   }
 
-  /** This method provides a way to get a cached plan if the key exists. */
+  /** 此方法提供了一种在键存在时获取缓存计划的方式 */
   def getCachedTable(key: QualifiedTableName): LogicalPlan = {
     tableRelationCache.getIfPresent(key)
   }
 
-  /** This method provides a way to cache a plan. */
+  /** 此方法提供了一种缓存计划的方式 */
   def cacheTable(t: QualifiedTableName, l: LogicalPlan): Unit = {
     tableRelationCache.put(t, l)
   }
 
-  /** This method provides a way to invalidate a cached plan. */
+  /** 此方法提供了一种使缓存计划失效的方式 */
   def invalidateCachedTable(key: QualifiedTableName): Unit = {
     tableRelationCache.invalidate(key)
   }
 
-  /** This method discards any cached table relation plans for the given table identifier. */
+  /** 此方法丢弃给定表标识符的任何缓存表关系计划 */
   def invalidateCachedTable(name: TableIdentifier): Unit = {
     val dbName = formatDatabaseName(name.database.getOrElse(currentDb))
     val tableName = formatTableName(name.table)
     invalidateCachedTable(QualifiedTableName(dbName, tableName))
   }
 
-  /** This method provides a way to invalidate all the cached plans. */
+/** 此方法提供了一种使所有缓存计划失效的方式 */
   def invalidateAllCachedTables(): Unit = {
     tableRelationCache.invalidateAll()
   }
 
   /**
-   * This method is used to make the given path qualified before we
-   * store this path in the underlying external catalog. So, when a path
-   * does not contain a scheme, this path will not be changed after the default
-   * FileSystem is changed.
+   * 此方法用于在将路径存储到底层外部目录之前使给定路径成为限定路径。
+   * 因此，当路径不包含方案时，在更改默认文件系统后，此路径不会更改。
    */
   private def makeQualifiedPath(path: URI): URI = {
     CatalogUtils.makeQualifiedPath(path, hadoopConf)
@@ -255,10 +215,11 @@ class SessionCatalog(
     }
   }
 
+
   // ----------------------------------------------------------------------------
-  // Databases
+  // 数据库
   // ----------------------------------------------------------------------------
-  // All methods in this category interact directly with the underlying catalog.
+  // 此类别中的所有方法都直接与底层目录交互 : 调用 ExternalCatalog 操作库
   // ----------------------------------------------------------------------------
 
   def createDatabase(dbDefinition: CatalogDatabase, ignoreIfExists: Boolean): Unit = {
@@ -331,31 +292,25 @@ class SessionCatalog(
     synchronized { currentDb = dbName }
   }
 
-  /**
-   * Get the path for creating a non-default database when database location is not provided
-   * by users.
-   */
+  /** 当用户未提供数据库位置时，获取创建非默认数据库的路径 */
   def getDefaultDBPath(db: String): URI = {
     CatalogUtils.stringToURI(formatDatabaseName(db) + ".db")
   }
 
   // ----------------------------------------------------------------------------
-  // Tables
+  // 表
   // ----------------------------------------------------------------------------
-  // There are two kinds of tables, temporary views and metastore tables.
-  // Temporary views are isolated across sessions and do not belong to any
-  // particular database. Metastore tables can be used across multiple
-  // sessions as their metadata is persisted in the underlying catalog.
+  // 有两种表：临时视图和元数据存储表。
+  // 临时视图在会话之间是隔离的，不属于任何特定数据库。
+  // 元数据存储表可以跨多个会话使用，因为它们的元数据持久化在底层目录中 : 调用 ExternalCatalog 操作
   // ----------------------------------------------------------------------------
 
   // ----------------------------------------------------
-  // | Methods that interact with metastore tables only |
+  // |         仅与元数据存储表交互的方法                   |
   // ----------------------------------------------------
 
-  /**
-   * Create a metastore table in the database specified in `tableDefinition`.
-   * If no such database is specified, create it in the current database.
-   */
+
+  /** 在 `tableDefinition` 中指定的数据库中创建元数据存储表。  如果未指定此类数据库，则在当前数据库中创建它。 */
   def createTable(
       tableDefinition: CatalogTable,
       ignoreIfExists: Boolean,
@@ -422,13 +377,10 @@ class SessionCatalog(
   }
 
   /**
-   * Alter the metadata of an existing metastore table identified by `tableDefinition`.
+   * 更改由 `tableDefinition` 标识的现有元数据存储表的元数据。
+   * 如果 `tableDefinition` 中未指定数据库，则假定该表在当前数据库中。
    *
-   * If no database is specified in `tableDefinition`, assume the table is in the
-   * current database.
-   *
-   * Note: If the underlying implementation does not support altering a certain field,
-   * this becomes a no-op.
+   * 注意：如果底层实现不支持更改某个字段，这将变成无操作。
    */
   def alterTable(tableDefinition: CatalogTable): Unit = {
     val db = formatDatabaseName(tableDefinition.identifier.database.getOrElse(getCurrentDatabase))
@@ -452,12 +404,10 @@ class SessionCatalog(
   }
 
   /**
-   * Alter the data schema of a table identified by the provided table identifier. The new data
-   * schema should not have conflict column names with the existing partition columns, and should
-   * still contain all the existing data columns.
+   * 更改由提供的表标识符标识的表的数据模式。新数据模式不应与现有分区列有冲突的列名， 并且仍应包含所有现有数据列。
    *
-   * @param identifier TableIdentifier
-   * @param newDataSchema Updated data schema to be used for the table
+   * @param identifier 表标识符
+   * @param newDataSchema 用于表的更新数据模式
    */
   def alterTableDataSchema(
       identifier: TableIdentifier,
@@ -484,10 +434,7 @@ class SessionCatalog(
     schema.fields.map(_.name).exists(conf.resolver(_, colName))
   }
 
-  /**
-   * Alter Spark's statistics of an existing metastore table identified by the provided table
-   * identifier.
-   */
+  /** 更改由提供的表标识符标识的现有元数据存储表的 Spark 统计信息。 */
   def alterTableStats(identifier: TableIdentifier, newStats: Option[CatalogStatistics]): Unit = {
     val db = formatDatabaseName(identifier.database.getOrElse(getCurrentDatabase))
     val table = formatTableName(identifier.table)
@@ -499,10 +446,7 @@ class SessionCatalog(
     refreshTable(identifier)
   }
 
-  /**
-   * Return whether a table/view with the specified name exists. If no database is specified, check
-   * with current database.
-   */
+  /** 返回具有指定名称的表/视图是否存在。如果未指定数据库，则检查当前数据库。 */
   def tableExists(name: TableIdentifier): Boolean = {
     val db = formatDatabaseName(name.database.getOrElse(getCurrentDatabase))
     val table = formatTableName(name.table)
@@ -510,10 +454,9 @@ class SessionCatalog(
   }
 
   /**
-   * Retrieve the metadata of an existing permanent table/view. If no database is specified,
-   * assume the table/view is in the current database.
-   * We replace char/varchar with "annotated" string type in the table schema, as the query
-   * engine doesn't support char/varchar yet.
+   * 检索现有永久表/视图的所有元数据。如果未指定数据库，则假定表/视图在当前数据库中。
+   * 只返回可以检索的属于同一数据库的表/视图。
+   * 例如，如果无法检索任何请求的表，则返回空列表。 不保证返回表的顺序。
    */
   @throws[NoSuchDatabaseException]
   @throws[NoSuchTableException]
@@ -523,8 +466,7 @@ class SessionCatalog(
   }
 
   /**
-   * Retrieve the metadata of an existing permanent table/view. If no database is specified,
-   * assume the table/view is in the current database.
+   * 检索现有永久表/视图的元数据。如果未指定数据库，则假定表/视图在当前数据库中。
    */
   @throws[NoSuchDatabaseException]
   @throws[NoSuchTableException]
@@ -537,11 +479,9 @@ class SessionCatalog(
   }
 
   /**
-   * Retrieve all metadata of existing permanent tables/views. If no database is specified,
-   * assume the table/view is in the current database.
-   * Only the tables/views belong to the same database that can be retrieved are returned.
-   * For example, if none of the requested tables could be retrieved, an empty list is returned.
-   * There is no guarantee of ordering of the returned tables.
+   * 检索现有永久表/视图的所有元数据。如果未指定数据库，则假定表/视图在当前数据库中。
+   * 只返回可以检索的属于同一数据库的表/视图。
+   * 例如，如果无法检索任何请求的表，则返回空列表。  不保证返回表的顺序。
    */
   @throws[NoSuchDatabaseException]
   def getTablesByName(names: Seq[TableIdentifier]): Seq[CatalogTable] = {
@@ -563,9 +503,9 @@ class SessionCatalog(
   }
 
   /**
-   * Load files stored in given path into an existing metastore table.
-   * If no database is specified, assume the table is in the current database.
-   * If the specified table is not found in the database then a [[NoSuchTableException]] is thrown.
+   * 将存储在给定路径中的文件加载到现有元数据存储表中。
+   * 如果未指定数据库，则假定该表在当前数据库中。
+   * 如果在数据库中找不到指定的表，则抛出 [[NoSuchTableException]]。
    */
   def loadTable(
       name: TableIdentifier,
@@ -580,9 +520,9 @@ class SessionCatalog(
   }
 
   /**
-   * Load files stored in given path into the partition of an existing metastore table.
-   * If no database is specified, assume the table is in the current database.
-   * If the specified table is not found in the database then a [[NoSuchTableException]] is thrown.
+   * 将存储在给定路径中的文件加载到现有元数据存储表的分区中。
+   * 如果未指定数据库，则假定该表在当前数据库中。
+   * 如果在数据库中找不到指定的表，则抛出 [[NoSuchTableException]]。
    */
   def loadPartition(
       name: TableIdentifier,
@@ -606,14 +546,11 @@ class SessionCatalog(
 
     new Path(new Path(dbLocation), formatTableName(tableIdent.table)).toUri
   }
+  // ---------------------------------------------------------------------------
+  // | 仅与临时视图交互的方法  : （tempViews，globalTempViewManager ）              |
+  // ---------------------------------------------------------------------------
 
-  // ----------------------------------------------
-  // | Methods that interact with temp views only |
-  // ----------------------------------------------
-
-  /**
-   * Create a local temporary view.
-   */
+  /** 创建本地临时视图 */
   def createTempView(
       name: String,
       viewDefinition: TemporaryViewRelation,
@@ -625,9 +562,7 @@ class SessionCatalog(
     tempViews.put(table, viewDefinition)
   }
 
-  /**
-   * Create a global temporary view.
-   */
+  /** 创建全局临时视图 */
   def createGlobalTempView(
       name: String,
       viewDefinition: TemporaryViewRelation,
@@ -635,10 +570,7 @@ class SessionCatalog(
     globalTempViewManager.create(formatTableName(name), viewDefinition, overrideIfExists)
   }
 
-  /**
-   * Alter the definition of a local/global temp view matching the given name, returns true if a
-   * temp view is matched and altered, false otherwise.
-   */
+  /** 更改与给定名称匹配的本地/全局临时视图的定义，如果匹配并更改了临时视图则返回 true，否则返回 false。 */
   def alterTempViewDefinition(
       name: TableIdentifier,
       viewDefinition: TemporaryViewRelation): Boolean = synchronized {
@@ -657,16 +589,12 @@ class SessionCatalog(
     }
   }
 
-  /**
-   * Return a local temporary view exactly as it was stored.
-   */
+  /** 完全按照存储的方式返回本地临时视图 */
   def getRawTempView(name: String): Option[TemporaryViewRelation] = synchronized {
     tempViews.get(formatTableName(name))
   }
 
-  /**
-   * Generate a [[View]] operator from the temporary view stored.
-   */
+  /** 从存储的临时视图生成 [[View]] 操作符   */
   def getTempView(name: String): Option[View] = synchronized {
     getRawTempView(name).map(getTempViewPlan)
   }
@@ -675,50 +603,42 @@ class SessionCatalog(
     tempViews.keySet.toSeq
   }
 
-  /**
-   * Return a global temporary view exactly as it was stored.
-   */
+  /** 完全按照存储的方式返回全局临时视图 */
   def getRawGlobalTempView(name: String): Option[TemporaryViewRelation] = {
     globalTempViewManager.get(formatTableName(name))
   }
 
-  /**
-   * Generate a [[View]] operator from the global temporary view stored.
-   */
+  /** 从存储的全局临时视图生成 [[View]] 操作符 */
   def getGlobalTempView(name: String): Option[View] = {
     getRawGlobalTempView(name).map(getTempViewPlan)
   }
 
   /**
-   * Drop a local temporary view.
-   *
-   * Returns true if this view is dropped successfully, false otherwise.
+   * 删除本地临时视图
+   * 如果成功删除此视图，则返回 true，否则返回 false。
    */
   def dropTempView(name: String): Boolean = synchronized {
     tempViews.remove(formatTableName(name)).isDefined
   }
 
+
   /**
-   * Drop a global temporary view.
-   *
-   * Returns true if this view is dropped successfully, false otherwise.
+   * 删除全局临时视图
+   * 如果成功删除此视图，则返回 true，否则返回 false。
    */
   def dropGlobalTempView(name: String): Boolean = {
     globalTempViewManager.remove(formatTableName(name))
   }
 
   // -------------------------------------------------------------
-  // | Methods that interact with temporary and metastore tables |
+  // |           与临时表和元数据存储表交互的方法                      |
   // -------------------------------------------------------------
 
   /**
-   * Retrieve the metadata of an existing temporary view or permanent table/view.
+   * 检索现有临时视图或永久表/视图的元数据。
    *
-   * If a database is specified in `name`, this will return the metadata of table/view in that
-   * database.
-   * If no database is specified, this will first attempt to get the metadata of a temporary view
-   * with the same name, then, if that does not exist, return the metadata of table/view in the
-   * current database.
+   * 如果在 `name` 中指定了数据库，这将返回该数据库中表/视图的元数据。
+   * 如果未指定数据库，这将首先尝试获取具有相同名称的临时视图的元数据， 然后，如果不存在，则返回当前数据库中表/视图的元数据。
    */
   def getTempViewOrPermanentTableMetadata(name: TableIdentifier): CatalogTable = synchronized {
     val table = formatTableName(name.table)
@@ -733,13 +653,12 @@ class SessionCatalog(
   }
 
   /**
-   * Rename a table.
+   * 重命名表。
    *
-   * If a database is specified in `oldName`, this will rename the table in that database.
-   * If no database is specified, this will first attempt to rename a temporary view with
-   * the same name, then, if that does not exist, rename the table in the current database.
+   * 如果在 `oldName` 中指定了数据库，这将重命名该数据库中的表。
+   * 如果未指定数据库，这将首先尝试重命名具有相同名称的临时视图， 然后，如果不存在，则重命名当前数据库中的表。
    *
-   * This assumes the database specified in `newName` matches the one in `oldName`.
+   * 这假定 `newName` 中指定的数据库与 `oldName` 中的数据库匹配。
    */
   def renameTable(oldName: TableIdentifier, newName: TableIdentifier): Unit = synchronized {
     val db = formatDatabaseName(oldName.database.getOrElse(currentDb))
@@ -777,11 +696,10 @@ class SessionCatalog(
   }
 
   /**
-   * Drop a table.
+   * 删除表。
    *
-   * If a database is specified in `name`, this will drop the table from that database.
-   * If no database is specified, this will first attempt to drop a temporary view with
-   * the same name, then, if that does not exist, drop the table from the current database.
+   * 如果在 `name` 中指定了数据库，这将从该数据库中删除表。
+   * 如果未指定数据库，这将首先尝试删除具有相同名称的临时视图，然后，如果不存在，则从当前数据库中删除表。
    */
   def dropTable(
       name: TableIdentifier,
@@ -811,20 +729,18 @@ class SessionCatalog(
   }
 
   /**
-   * Return a [[LogicalPlan]] that represents the given table or view.
+   * 返回表示给定表或视图的 [[LogicalPlan]]。
    *
-   * If a database is specified in `name`, this will return the table/view from that database.
-   * If no database is specified, this will first attempt to return a temporary view with
-   * the same name, then, if that does not exist, return the table/view from the current database.
+   * 如果在 `name` 中指定了数据库，这将返回该数据库中的表/视图。
+   * 如果未指定数据库，这将首先尝试返回具有相同名称的临时视图， 然后，如果不存在，则返回当前数据库中的表/视图。
    *
-   * Note that, the global temp view database is also valid here, this will return the global temp
-   * view matching the given name.
+   * 注意，全局临时视图数据库在这里也是有效的，这将返回与给定名称匹配的全局临时视图。
    *
-   * If the relation is a view, we generate a [[View]] operator from the view description, and
-   * wrap the logical plan in a [[SubqueryAlias]] which will track the name of the view.
-   * [[SubqueryAlias]] will also keep track of the name and database(optional) of the table/view
+   * 如果关系是视图，我们从视图描述生成 [[View]] 操作符，
+   * 并将逻辑计划包装在 [[SubqueryAlias]] 中，它将跟踪视图的名称。
+   * [[SubqueryAlias]] 还将跟踪表/视图的名称和数据库（可选）
    *
-   * @param name The name of the table/view that we look up.
+   * @param name 我们查找的表/视图的名称
    */
   def lookupRelation(name: TableIdentifier): LogicalPlan = {
     synchronized {
@@ -977,9 +893,7 @@ class SessionCatalog(
     }
   }
 
-  /**
-   * Return whether the given name parts belong to a temporary or global temporary view.
-   */
+  /**  返回给定名称部分是否属于临时或全局临时视图 */
   def isTempView(nameParts: Seq[String]): Boolean = {
     if (nameParts.length > 2) return false
     import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
@@ -997,11 +911,10 @@ class SessionCatalog(
     }
   }
 
+
   /**
-   * Return whether a table with the specified name is a temporary view.
-   *
-   * Note: The temporary view cache is checked only when database is not
-   * explicitly specified.
+   * 返回具有指定名称的表是否为临时视图。
+   * 注意：仅当未显式指定数据库时才检查临时视图缓存。
    */
   def isTempView(name: TableIdentifier): Boolean = synchronized {
     lookupTempView(name).isDefined
@@ -1022,27 +935,21 @@ class SessionCatalog(
   }
 
   /**
-   * List all tables in the specified database, including local temporary views.
-   *
-   * Note that, if the specified database is global temporary view database, we will list global
-   * temporary views.
+   * 列出指定数据库中的所有表，包括本地临时视图。
+   * 注意，如果指定的数据库是全局临时视图数据库，我们将列出全局临时视图。
    */
   def listTables(db: String): Seq[TableIdentifier] = listTables(db, "*")
 
   /**
-   * List all matching tables in the specified database, including local temporary views.
-   *
-   * Note that, if the specified database is global temporary view database, we will list global
-   * temporary views.
+   * 列出指定数据库中所有匹配的表，包括本地临时视图。
+   * 注意，如果指定的数据库是全局临时视图数据库，我们将列出全局临时视图。
    */
   def listTables(db: String, pattern: String): Seq[TableIdentifier] = listTables(db, pattern, true)
 
   /**
-   * List all matching tables in the specified database, including local temporary views
-   * if includeLocalTempViews is enabled.
+   * 列出指定数据库中所有匹配的表，如果启用 includeLocalTempViews，则包括本地临时视图。
    *
-   * Note that, if the specified database is global temporary view database, we will list global
-   * temporary views.
+   * 注意，如果指定的数据库是全局临时视图数据库，我们将列出全局临时视图。
    */
   def listTables(
       db: String,
@@ -1067,9 +974,7 @@ class SessionCatalog(
     }
   }
 
-  /**
-   * List all matching views in the specified database, including local temporary views.
-   */
+  /** 列出指定数据库中所有匹配的视图，包括本地临时视图。 */
   def listViews(db: String, pattern: String): Seq[TableIdentifier] = {
     val dbName = formatDatabaseName(db)
     val dbViews = if (dbName == globalTempViewManager.database) {
@@ -1086,9 +991,7 @@ class SessionCatalog(
     dbViews ++ listLocalTempViews(pattern)
   }
 
-  /**
-   * List all matching local temporary views.
-   */
+  /** 列出所有匹配的本地临时视图。 */
   def listLocalTempViews(pattern: String): Seq[TableIdentifier] = {
     synchronized {
       StringUtils.filterPattern(tempViews.keys.toSeq, pattern).map { name =>
@@ -1098,26 +1001,21 @@ class SessionCatalog(
   }
 
   /**
-   * Refresh table entries in structures maintained by the session catalog such as:
-   *   - The map of temporary or global temporary view names to their logical plans
-   *   - The relation cache which maps table identifiers to their logical plans
+   * 刷新会话目录维护的结构中的表条目，例如：
+   *   - 临时或全局临时视图名称到其逻辑计划的映射
+   *   - 将表标识符映射到其逻辑计划的关系缓存
    *
-   * For temp views, it refreshes their logical plans, and as a consequence of that it can refresh
-   * the file indexes of the base relations (`HadoopFsRelation` for instance) used in the views.
-   * The method still keeps the views in the internal lists of session catalog.
+   * 对于临时视图，它刷新其逻辑计划，因此可以刷新视图中使用的基础关系的文件索引（例如 `HadoopFsRelation`）。该方法仍将视图保留在会话目录的内部列表中。
    *
-   * For tables/views, it removes their entries from the relation cache.
+   * 对于表/视图，它从关系缓存中删除其条目。
    *
-   * The method is supposed to use in the following situations:
-   *   1. The logical plan of a table/view was changed, and cached table/view data is cleared
-   *      explicitly. For example, like in `AlterTableRenameCommand` which re-caches the table
-   *      itself. Otherwise if you need to refresh cached data, consider using of
-   *      `CatalogImpl.refreshTable()`.
-   *   2. A table/view doesn't exist, and need to only remove its entry in the relation cache since
-   *      the cached data is invalidated explicitly like in `DropTableCommand` which uncaches
-   *      table/view data itself.
-   *   3. Meta-data (such as file indexes) of any relation used in a temporary view should be
-   *      updated.
+   * 该方法应在以下情况下使用：
+   *   1. 表/视图的逻辑计划已更改，并且显式清除了缓存的表/视图数据。
+   *      例如，像 `AlterTableRenameCommand` 中那样重新缓存表本身。
+   *      否则，如果需要刷新缓存数据，请考虑使用 `CatalogImpl.refreshTable()`。
+   *   2. 表/视图不存在，只需要删除其在关系缓存中的条目，因为缓存数据像在 `DropTableCommand`
+   *      中那样显式失效，它会取消缓存表/视图数据本身。
+   *   3. 临时视图中使用的任何关系的元数据（例如文件索引）应该更新。
    */
   def refreshTable(name: TableIdentifier): Unit = synchronized {
     lookupTempView(name).map(_.refresh).getOrElse {
@@ -1129,28 +1027,27 @@ class SessionCatalog(
   }
 
   /**
-   * Drop all existing temporary views.
-   * For testing only.
+   * 删除所有现有的临时视图。
+   * 仅用于测试。
    */
   def clearTempTables(): Unit = synchronized {
     tempViews.clear()
   }
 
   // ----------------------------------------------------------------------------
-  // Partitions
+  // 分区
   // ----------------------------------------------------------------------------
-  // All methods in this category interact directly with the underlying catalog.
-  // These methods are concerned with only metastore tables.
+  // 此类别中的所有方法都直接与底层目录交互。
+  // 这些方法仅涉及元数据存储表。
   // ----------------------------------------------------------------------------
 
-  // TODO: We need to figure out how these methods interact with our data source
-  // tables. For such tables, we do not store values of partitioning columns in
-  // the metastore. For now, partition values of a data source table will be
-  // automatically discovered when we load the table.
+  // TODO: 我们需要弄清楚这些方法如何与我们的数据源表交互。
+  // 对于此类表，我们不在元数据存储中存储分区列的值。
+  // 目前，当我们加载表时，将自动发现数据源表的分区值。
 
   /**
-   * Create partitions in an existing table, assuming it exists.
-   * If no database is specified, assume the table is in the current database.
+   * 在现有表中创建分区，假设它存在。
+   * 如果未指定数据库，则假定该表在当前数据库中。
    */
   def createPartitions(
       tableName: TableIdentifier,
@@ -1166,9 +1063,10 @@ class SessionCatalog(
       db, table, partitionWithQualifiedPath(tableName, parts), ignoreIfExists)
   }
 
+
   /**
-   * Drop partitions from a table, assuming they exist.
-   * If no database is specified, assume the table is in the current database.
+   * 从表中删除分区，假设它们存在。
+   * 如果未指定数据库，则假定该表在当前数据库中。
    */
   def dropPartitions(
       tableName: TableIdentifier,
@@ -1186,10 +1084,10 @@ class SessionCatalog(
   }
 
   /**
-   * Override the specs of one or many existing table partitions, assuming they exist.
+   * 覆盖一个或多个现有表分区的规范，假设它们存在。
    *
-   * This assumes index i of `specs` corresponds to index i of `newSpecs`.
-   * If no database is specified, assume the table is in the current database.
+   * 这假定 `specs` 的索引 i 对应于 `newSpecs` 的索引 i。
+   * 如果未指定数据库，则假定该表在当前数据库中。
    */
   def renamePartitions(
       tableName: TableIdentifier,
@@ -1208,13 +1106,11 @@ class SessionCatalog(
   }
 
   /**
-   * Alter one or many table partitions whose specs that match those specified in `parts`,
-   * assuming the partitions exist.
+   * 更改一个或多个表分区，其规范与 `parts` 中指定的规范匹配，假设分区存在。
    *
-   * If no database is specified, assume the table is in the current database.
+   * 如果未指定数据库，则假定该表在当前数据库中。
    *
-   * Note: If the underlying implementation does not support altering a certain field,
-   * this becomes a no-op.
+   * 注意：如果底层实现不支持更改某个字段，这将变成无操作。
    */
   def alterPartitions(tableName: TableIdentifier, parts: Seq[CatalogTablePartition]): Unit = {
     val db = formatDatabaseName(tableName.database.getOrElse(getCurrentDatabase))
@@ -1227,8 +1123,8 @@ class SessionCatalog(
   }
 
   /**
-   * Retrieve the metadata of a table partition, assuming it exists.
-   * If no database is specified, assume the table is in the current database.
+   * 检索表分区的元数据，假设它存在。
+   * 如果未指定数据库，则假定该表在当前数据库中。
    */
   def getPartition(tableName: TableIdentifier, spec: TablePartitionSpec): CatalogTablePartition = {
     val db = formatDatabaseName(tableName.database.getOrElse(getCurrentDatabase))
@@ -1241,11 +1137,11 @@ class SessionCatalog(
   }
 
   /**
-   * List the names of all partitions that belong to the specified table, assuming it exists.
+   * 列出属于指定表的所有分区的名称，假设该表存在。
    *
-   * A partial partition spec may optionally be provided to filter the partitions returned.
-   * For instance, if there exist partitions (a='1', b='2'), (a='1', b='3') and (a='2', b='4'),
-   * then a partial spec of (a='1') will return the first two only.
+   * 可以选择性地提供部分分区规范以过滤返回的分区。
+   * 例如，如果存在分区 (a='1', b='2')、(a='1', b='3') 和 (a='2', b='4')，
+   * 那么部分规范 (a='1') 将仅返回前两个。
    */
   def listPartitionNames(
       tableName: TableIdentifier,
@@ -1281,10 +1177,7 @@ class SessionCatalog(
     externalCatalog.listPartitions(db, table, partialSpec)
   }
 
-  /**
-   * List the metadata of partitions that belong to the specified table, assuming it exists, that
-   * satisfy the given partition-pruning predicate expressions.
-   */
+  /** 列出满足给定分区修剪谓词表达式的属于指定表的分区的元数据，假设该表存在。  */
   def listPartitionsByFilter(
       tableName: TableIdentifier,
       predicates: Seq[Expression]): Seq[CatalogTablePartition] = {
@@ -1295,9 +1188,7 @@ class SessionCatalog(
     externalCatalog.listPartitionsByFilter(db, table, predicates, conf.sessionLocalTimeZone)
   }
 
-  /**
-   * Verify if the input partition spec has any empty value.
-   */
+  /** 验证输入分区规范是否有任何空值。 */
   private def requireNonEmptyValueInPartitionSpec(specs: Seq[TablePartitionSpec]): Unit = {
     specs.foreach { s =>
       if (s.values.exists(v => v != null && v.isEmpty)) {
@@ -1308,9 +1199,7 @@ class SessionCatalog(
     }
   }
 
-  /**
-   * Verify if the input partition spec exactly matches the existing defined partition spec
-   * The columns must be the same but the orders could be different.
+  /** 验证输入分区规范是否与现有定义的分区规范完全匹配列必须相同，但顺序可以不同。
    */
   private def requireExactMatchedPartitionSpec(
       specs: Seq[TablePartitionSpec],
@@ -1323,10 +1212,7 @@ class SessionCatalog(
     }
   }
 
-  /**
-   * Verify if the input partition spec partially matches the existing defined partition spec
-   * That is, the columns of partition spec should be part of the defined partition spec.
-   */
+  /** 验证输入分区规范是否部分匹配现有定义的分区规范 也就是说，分区规范的列应该是定义的分区规范的一部分。 */
   private def requirePartialMatchedPartitionSpec(
       specs: Seq[TablePartitionSpec],
       table: CatalogTable): Unit = {
@@ -1341,10 +1227,10 @@ class SessionCatalog(
     }
   }
 
+
   /**
-   * Make the partition path qualified.
-   * If the partition path is relative, e.g. 'paris', it will be qualified with
-   * parent path using table location, e.g. 'file:/warehouse/table/paris'
+   * 使分区路径成为限定路径。
+   * 如果分区路径是相对的，例如 'paris'，它将使用表位置的父路径进行限定， 例如 'file:/warehouse/table/paris'
    */
   private def partitionWithQualifiedPath(
       tableIdentifier: TableIdentifier,
@@ -1358,25 +1244,24 @@ class SessionCatalog(
       } else part
     }
   }
+
   // ----------------------------------------------------------------------------
-  // Functions
+  // 函数
   // ----------------------------------------------------------------------------
-  // There are two kinds of functions, temporary functions and metastore
-  // functions (permanent UDFs). Temporary functions are isolated across
-  // sessions. Metastore functions can be used across multiple sessions as
-  // their metadata is persisted in the underlying catalog.
+  // 有两种函数：临时函数和元数据存储函数（永久 UDF）。
+  // 临时函数在会话之间是隔离的。
+  // 元数据存储函数可以跨多个会话使用，因为它们的元数据持久化在底层目录中。
   // ----------------------------------------------------------------------------
 
   // -------------------------------------------------------
-  // | Methods that interact with metastore functions only |
+  // |              仅与元数据存储函数交互的方法                |
   // -------------------------------------------------------
 
   /**
-   * Create a function in the database specified in `funcDefinition`.
-   * If no such database is specified, create it in the current database.
+   * 在 `funcDefinition` 中指定的数据库中创建函数。
+   * 如果未指定此类数据库，则在当前数据库中创建它。
    *
-   * @param ignoreIfExists: When true, ignore if the function with the specified name exists
-   *                        in the specified database.
+   * @param ignoreIfExists: 为 true 时，如果指定数据库中存在具有指定名称的函数，则忽略
    */
   def createFunction(funcDefinition: CatalogFunction, ignoreIfExists: Boolean): Unit = {
     val db = formatDatabaseName(funcDefinition.identifier.database.getOrElse(getCurrentDatabase))
@@ -1391,8 +1276,8 @@ class SessionCatalog(
   }
 
   /**
-   * Drop a metastore function.
-   * If no database is specified, assume the function is in the current database.
+   * 删除元数据存储函数。
+   * 如果未指定数据库，则假定该函数在当前数据库中。
    */
   def dropFunction(name: FunctionIdentifier, ignoreIfNotExists: Boolean): Unit = {
     val db = formatDatabaseName(name.database.getOrElse(getCurrentDatabase))
@@ -1400,10 +1285,8 @@ class SessionCatalog(
     val identifier = name.copy(database = Some(db))
     if (functionExists(identifier)) {
       if (functionRegistry.functionExists(identifier)) {
-        // If we have loaded this function into the FunctionRegistry,
-        // also drop it from there.
-        // For a permanent function, because we loaded it to the FunctionRegistry
-        // when it's first used, we also need to drop it from the FunctionRegistry.
+        // 如果我们已将此函数加载到 FunctionRegistry 中， 也从那里删除它。
+        // 对于永久函数，因为我们在首次使用时将其加载到 FunctionRegistry 中， 我们还需要从 FunctionRegistry 中删除它。
         functionRegistry.dropFunction(identifier)
       }
       externalCatalog.dropFunction(db, name.funcName)
@@ -1413,8 +1296,8 @@ class SessionCatalog(
   }
 
   /**
-   * overwrite a metastore function in the database specified in `funcDefinition`..
-   * If no database is specified, assume the function is in the current database.
+   * 覆盖 `funcDefinition` 中指定的数据库中的元数据存储函数。
+   * 如果未指定数据库，则假定该函数在当前数据库中。
    */
   def alterFunction(funcDefinition: CatalogFunction): Unit = {
     val db = formatDatabaseName(funcDefinition.identifier.database.getOrElse(getCurrentDatabase))
@@ -1423,10 +1306,8 @@ class SessionCatalog(
     val newFuncDefinition = funcDefinition.copy(identifier = identifier)
     if (functionExists(identifier)) {
       if (functionRegistry.functionExists(identifier)) {
-        // If we have loaded this function into the FunctionRegistry,
-        // also drop it from there.
-        // For a permanent function, because we loaded it to the FunctionRegistry
-        // when it's first used, we also need to drop it from the FunctionRegistry.
+        // 如果我们已将此函数加载到 FunctionRegistry 中， 也从那里删除它。
+        // 对于永久函数，因为我们在首次使用时将其加载到 FunctionRegistry 中， 我们还需要从 FunctionRegistry 中删除它。
         functionRegistry.dropFunction(identifier)
       }
       externalCatalog.alterFunction(db, newFuncDefinition)
@@ -1435,11 +1316,10 @@ class SessionCatalog(
     }
   }
 
+
   /**
-   * Retrieve the metadata of a metastore function.
-   *
-   * If a database is specified in `name`, this will return the function in that database.
-   * If no database is specified, this will return the function in the current database.
+   * 检索元数据存储函数的元数据。
+   * 如果在 `name` 中指定了数据库，这将返回该数据库中的函数。 如果未指定数据库，这将返回当前数据库中的函数。
    */
   def getFunctionMetadata(name: FunctionIdentifier): CatalogFunction = {
     val db = formatDatabaseName(name.database.getOrElse(getCurrentDatabase))
@@ -1447,9 +1327,7 @@ class SessionCatalog(
     externalCatalog.getFunction(db, name.funcName)
   }
 
-  /**
-   * Check if the function with the specified name exists
-   */
+  /** 检查具有指定名称的函数是否存在 */
   def functionExists(name: FunctionIdentifier): Boolean = {
     functionRegistry.functionExists(name) || tableFunctionRegistry.functionExists(name) || {
       val db = formatDatabaseName(name.database.getOrElse(getCurrentDatabase))
@@ -1459,33 +1337,26 @@ class SessionCatalog(
   }
 
   // ----------------------------------------------------------------
-  // | Methods that interact with temporary and metastore functions |
+  // |         与临时函数和元数据存储函数交互的方法                       |
   // ----------------------------------------------------------------
 
-  /**
-   * 根据提供的函数元数据构造一个 [[FunctionBuilder]]。.
-   */
+  /**  根据提供的函数元数据构造一个 [[FunctionBuilder]]。 */
   private def makeFunctionBuilder(func: CatalogFunction): FunctionBuilder = {
     val className = func.className
     if (!Utils.classIsLoadable(className)) {
       throw QueryCompilationErrors.cannotLoadClassWhenRegisteringFunctionError(className, func.identifier)
     }
-    val clazz = Utils.classForName(className)
+    val clazz = Utils.classForName(className)     // 加载对应的类
     val name = func.identifier.unquotedString
     (input: Seq[Expression]) => functionExpressionBuilder.makeExpression(name, clazz, input)
   }
 
-  /**
-   * Loads resources such as JARs and Files for a function. Every resource is represented
-   * by a tuple (resource type, resource uri).
-   */
+  /** 为函数加载资源，例如 JAR 和文件。每个资源由一个元组（资源类型，资源 uri）表示。 */
   def loadFunctionResources(resources: Seq[FunctionResource]): Unit = {
     resources.foreach(functionResourceLoader.loadResource)
   }
 
-  /**
-   * 将临时或永久标量函数注册到特定会话的 [[FunctionRegistry]] 中。
-   */
+  /** 将临时或永久标量函数注册到特定会话的 [[FunctionRegistry]] 中。 */
   def registerFunction(
       funcDefinition: CatalogFunction,
       overrideIfExists: Boolean,
@@ -1523,15 +1394,15 @@ class SessionCatalog(
   }
 
   /**
-   * Unregister a temporary or permanent function from a session-specific [[FunctionRegistry]]
-   * Return true if function exists.
+   * 从特定会话的 [[FunctionRegistry]] 中注销临时或永久函数
+   * 如果函数存在则返回 true。
    */
   def unregisterFunction(name: FunctionIdentifier): Boolean = {
     functionRegistry.dropFunction(name)
   }
 
   /**
-   * Drop a temporary function.
+   * 删除临时函数。
    */
   def dropTempFunction(name: String, ignoreIfNotExists: Boolean): Unit = {
     if (!functionRegistry.dropFunction(FunctionIdentifier(name)) &&
@@ -1542,7 +1413,7 @@ class SessionCatalog(
   }
 
   /**
-   * Returns whether it is a temporary function. If not existed, returns false.
+   * 返回它是否为临时函数。如果不存在，则返回 false。
    */
   def isTemporaryFunction(name: FunctionIdentifier): Boolean = {
     // A temporary function is a function that has been registered in functionRegistry
@@ -1550,30 +1421,30 @@ class SessionCatalog(
     name.database.isEmpty && isRegisteredFunction(name) && !isBuiltinFunction(name)
   }
 
+
   /**
-   * Return whether this function has been registered in the function registry of the current
-   * session. If not existed, return false.
+   * 返回此函数是否已在当前会话的函数注册表中注册。如果不存在，则返回 false。
    */
   def isRegisteredFunction(name: FunctionIdentifier): Boolean = {
     functionRegistry.functionExists(name) || tableFunctionRegistry.functionExists(name)
   }
 
   /**
-   * Returns whether it is a persistent function. If not existed, returns false.
+   * 返回它是否为持久函数。如果不存在，则返回 false。
    */
   def isPersistentFunction(name: FunctionIdentifier): Boolean = {
     val db = formatDatabaseName(name.database.getOrElse(getCurrentDatabase))
     databaseExists(db) && externalCatalog.functionExists(db, name.funcName)
   }
 
-  /**
-   * Returns whether it is a built-in function.
-   */
   def isBuiltinFunction(name: FunctionIdentifier): Boolean = {
     FunctionRegistry.builtin.functionExists(name) ||
       TableFunctionRegistry.builtin.functionExists(name)
   }
 
+  /**
+   * 返回它是否为内置函数。
+   */
   protected[sql] def failFunctionLookup(
       name: FunctionIdentifier, cause: Option[Throwable] = None): Nothing = {
     throw new NoSuchFunctionException(
@@ -1581,8 +1452,8 @@ class SessionCatalog(
   }
 
   /**
-   * Look up the `ExpressionInfo` of the given function by name if it's a built-in or temp function.
-   * This only supports scalar functions.
+   * 如果是内置或临时函数，则按名称查找给定函数的 `ExpressionInfo`。
+   * 这仅支持标量函数。
    */
   def lookupBuiltinOrTempFunction(name: String): Option[ExpressionInfo] = {
     FunctionRegistry.builtinOperators.get(name.toLowerCase(Locale.ROOT)).orElse {
@@ -1592,17 +1463,16 @@ class SessionCatalog(
   }
 
   /**
-   * Look up the `ExpressionInfo` of the given function by name if it's a built-in or
-   * temp table function.
+   * 如果是内置或临时表函数，则按名称查找给定函数的 `ExpressionInfo`。
    */
   def lookupBuiltinOrTempTableFunction(name: String): Option[ExpressionInfo] = synchronized {
     lookupTempFuncWithViewContext(
       name, TableFunctionRegistry.builtin.functionExists, tableFunctionRegistry.lookupFunction)
   }
 
+
   /**
-   * Look up a built-in or temp scalar function by name and resolves it to an Expression if such
-   * a function exists.
+   * 按名称查找内置或临时标量函数，如果存在此类函数，则将其解析为 Expression。
    */
   def resolveBuiltinOrTempFunction(name: String, arguments: Seq[Expression]): Option[Expression] = {
     resolveBuiltinOrTempFunctionInternal(
@@ -1610,8 +1480,7 @@ class SessionCatalog(
   }
 
   /**
-   * Look up a built-in or temp table function by name and resolves it to a LogicalPlan if such
-   * a function exists.
+   * 按名称查找内置或临时表函数，如果存在此类函数，则将其解析为 LogicalPlan。
    */
   def resolveBuiltinOrTempTableFunction(
       name: String, arguments: Seq[Expression]): Option[LogicalPlan] = {
@@ -1664,8 +1533,7 @@ class SessionCatalog(
   }
 
   /**
-   * Look up the `ExpressionInfo` of the given function by name if it's a persistent function.
-   * This supports both scalar and table functions.
+   * 如果是持久函数，则按名称查找给定函数的 `ExpressionInfo`。 这支持标量函数和表函数。
    */
   def lookupPersistentFunction(name: FunctionIdentifier): ExpressionInfo = {
     val database = name.database.orElse(Some(currentDb)).map(formatDatabaseName)
@@ -1685,7 +1553,7 @@ class SessionCatalog(
   }
 
   /**
-   * Look up a persistent scalar function by name and resolves it to an Expression.
+   * 按名称查找持久标量函数并将其解析为 Expression。
    */
   def resolvePersistentFunction(
       name: FunctionIdentifier, arguments: Seq[Expression]): Expression = {
@@ -1693,7 +1561,7 @@ class SessionCatalog(
   }
 
   /**
-   * Look up a persistent table function by name and resolves it to a LogicalPlan.
+   * 按名称查找持久表函数并将其解析为 LogicalPlan。
    */
   def resolvePersistentTableFunction(
       name: FunctionIdentifier,
@@ -1740,7 +1608,7 @@ class SessionCatalog(
   }
 
   /**
-   * Look up the [[ExpressionInfo]] associated with the specified function, assuming it exists.
+   * 查找与指定函数关联的 [[ExpressionInfo]]，假设它存在。
    */
   def lookupFunctionInfo(name: FunctionIdentifier): ExpressionInfo = synchronized {
     if (name.database.isEmpty) {
@@ -1751,9 +1619,8 @@ class SessionCatalog(
       lookupPersistentFunction(name)
     }
   }
-
-  // The actual function lookup logic looks up temp/built-in function first, then persistent
-  // function from either v1 or v2 catalog. This method only look up v1 catalog.
+  // 实际的函数查找逻辑首先查找临时/内置函数，然后从 v1 或 v2 目录查找持久函数。
+  // 此方法仅查找 v1 目录。
   def lookupFunction(name: FunctionIdentifier, children: Seq[Expression]): Expression = {
     if (name.database.isEmpty) {
       resolveBuiltinOrTempFunction(name.funcName, children)
@@ -1773,7 +1640,7 @@ class SessionCatalog(
   }
 
   /**
-   * List all registered functions in a database with the given pattern.
+   * 列出数据库中具有给定模式的所有已注册函数。
    */
   private def listRegisteredFunctions(db: String, pattern: String): Seq[FunctionIdentifier] = {
     val functions = (functionRegistry.listFunction() ++ tableFunctionRegistry.listFunction())
@@ -1790,16 +1657,14 @@ class SessionCatalog(
   }
 
   /**
-   * List all functions in the specified database, including temporary functions. This
-   * returns the function identifier and the scope in which it was defined (system or user
-   * defined).
+   * 列出指定数据库中的所有函数，包括临时函数。
+   * 这返回函数标识符及其定义的范围（系统或用户定义）。
    */
   def listFunctions(db: String): Seq[(FunctionIdentifier, String)] = listFunctions(db, "*")
 
   /**
-   * List all matching functions in the specified database, including temporary functions. This
-   * returns the function identifier and the scope in which it was defined (system or user
-   * defined).
+   * 列出指定数据库中所有匹配的函数，包括临时函数。
+   * 这返回函数标识符及其定义的范围（系统或用户定义）。
    */
   def listFunctions(db: String, pattern: String): Seq[(FunctionIdentifier, String)] = {
     val dbName = formatDatabaseName(db)
@@ -1819,14 +1684,13 @@ class SessionCatalog(
 
 
   // -----------------
-  // | Other methods |
+  // |   其他方法      |
   // -----------------
 
   /**
-   * Drop all existing databases (except "default"), tables, partitions and functions,
-   * and set the current database to "default".
+   * 删除所有现有数据库（"default" 除外）、表、分区和函数， 并将当前数据库设置为 "default"。
    *
-   * This is mainly used for tests.
+   * 这主要用于测试。
    */
   def reset(): Unit = synchronized {
     setCurrentDatabase(DEFAULT_DATABASE)
@@ -1867,13 +1731,13 @@ class SessionCatalog(
     }
   }
 
+
   /**
-   * Copy the current state of the catalog to another catalog.
+   * 将目录的当前状态复制到另一个目录。
    *
-   * This function is synchronized on this [[SessionCatalog]] (the source) to make sure the copied
-   * state is consistent. The target [[SessionCatalog]] is not synchronized, and should not be
-   * because the target [[SessionCatalog]] should not be published at this point. The caller must
-   * synchronize on the target if this assumption does not hold.
+   * 此函数在此 [[SessionCatalog]]（源）上同步，以确保复制的状态是一致的。
+   * 目标 [[SessionCatalog]] 不同步，也不应该同步，因为此时不应发布目标 [[SessionCatalog]]。
+   * 如果此假设不成立，调用者必须在目标上同步。
    */
   private[sql] def copyStateTo(target: SessionCatalog): Unit = synchronized {
     target.currentDb = currentDb
@@ -1882,7 +1746,7 @@ class SessionCatalog(
   }
 
   /**
-   * Validate the new location before renaming a managed table, which should be non-existent.
+   * 在重命名托管表之前验证新位置，该位置应该不存在。
    */
   private def validateNewLocationOfRename(
       oldName: TableIdentifier,

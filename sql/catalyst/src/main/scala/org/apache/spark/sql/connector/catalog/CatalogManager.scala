@@ -28,17 +28,18 @@ import org.apache.spark.sql.internal.SQLConf
 
 /**
  * 一个线程安全的 [[CatalogPlugin]] 管理器。它跟踪所有已注册的catalog，并允许调用方按名称查找catalog。
- * 目前仍有许多命令（例如 ANALYZE TABLE）不支持 v2 Catalog API。这些命令会忽略当前Catalog， 直接访问 v1 的 SessionCatalog。
- * 为了避免同时在 SessionCatalog 和 CatalogManager 中 跟踪当前命名空间，我们让 CatalogManager 在当前目录是会话目录时，负责设置/获取
+ * 目前仍有许多命令（例如 ANALYZE TABLE）不支持 v2 Catalog API。这些命令会忽略当前 [[Catalog]]， 直接访问 v1 的 [[SessionCatalog]]。
+ * 为了避免同时在 [[SessionCatalog]] 和 [[CatalogManager]] 中 跟踪当前命名空间，我们让 [[CatalogManager]] 在当前目录是会话目录时，负责设置/获取
  * SessionCatalog 的当前数据库。
  */
 // TODO: all commands should look up table from the current catalog. The `SessionCatalog` doesn't
 //       need to track current database at all.
 private[sql]
-class CatalogManager(
-    defaultSessionCatalog: CatalogPlugin,
-    val v1SessionCatalog: SessionCatalog) extends SQLConfHelper with Logging {
-  import CatalogManager.SESSION_CATALOG_NAME
+class CatalogManager(defaultSessionCatalog: CatalogPlugin,
+           val v1SessionCatalog: SessionCatalog
+   ) extends SQLConfHelper with Logging {
+
+  import CatalogManager.SESSION_CATALOG_NAME      // spark_catalog
   import CatalogV2Util._
 
   private val catalogs = mutable.HashMap.empty[String, CatalogPlugin]
@@ -101,8 +102,7 @@ class CatalogManager(
 
   def setCurrentNamespace(namespace: Array[String]): Unit = synchronized {
     currentCatalog match {
-      case _ if isSessionCatalog(currentCatalog) && namespace.length == 1 =>
-        v1SessionCatalog.setCurrentDatabase(namespace.head)
+      case _ if isSessionCatalog(currentCatalog) && namespace.length == 1 => v1SessionCatalog.setCurrentDatabase(namespace.head)
       case _ if isSessionCatalog(currentCatalog) =>
         throw QueryCompilationErrors.noSuchNamespaceError(namespace)
       case catalog: SupportsNamespaces if !catalog.namespaceExists(namespace) =>

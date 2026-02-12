@@ -23,8 +23,7 @@ import org.apache.spark.sql.catalyst.rules.Rule
 
 /**
  * :: Experimental ::
- * Holder for experimental methods for the bravest. We make NO guarantee about the stability
- * regarding binary compatibility and source compatibility of methods here.
+ * 为最勇敢的人提供的实验性方法的持有者。我们不保证这里方法的二进制兼容性和源代码兼容性的稳定性。
  *
  * {{{
  *   spark.experimental.extraStrategies += ...
@@ -37,8 +36,8 @@ import org.apache.spark.sql.catalyst.rules.Rule
 class ExperimentalMethods private[sql]() {
 
   /**
-   * Allows extra strategies to be injected into the query planner at runtime.  Note this API
-   * should be considered experimental and is not intended to be stable across releases.
+   * 允许在运行时将额外的策略注入到查询规划器中。注意，此 API 应被视为实验性的，
+   * 不保证在各个版本之间保持稳定。
    *
    * @since 1.3.0
    */

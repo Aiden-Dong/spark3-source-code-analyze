@@ -44,73 +44,62 @@ import org.apache.spark.util.{DependencyUtils, Utils}
  *
  * 一个类，用于保存给定 [[SparkSession]] 中的所有会话特定状态。
  *
- * @param sharedState The state shared across sessions, e.g. global view manager, external catalog.
- * @param conf SQL-specific key-value configurations.
- * @param experimentalMethods Interface to add custom planning strategies and optimizers.
- * @param functionRegistry Internal catalog for managing functions registered by the user.
- * @param udfRegistration Interface exposed to the user for registering user-defined functions.
- * @param catalogBuilder a function to create an internal catalog for managing table and database
- *                       states.
- * @param sqlParser Parser that extracts expressions, plans, table identifiers etc. from SQL texts.
- * @param analyzerBuilder A function to create the logical query plan analyzer for resolving
- *                        unresolved attributes and relations.
- * @param optimizerBuilder a function to create the logical query plan optimizer.
- * @param planner Planner that converts optimized logical plans to physical plans.
- * @param streamingQueryManagerBuilder A function to create a streaming query manager to
- *                                     start and stop streaming queries.
- * @param listenerManager Interface to register custominternal/SessionState.scala
- *                        [[org.apache.spark.sql.util.QueryExecutionListener]]s.
- * @param resourceLoaderBuilder a function to create a session shared resource loader to load JARs,
- *                              files, etc.
- * @param createQueryExecution Function used to create QueryExecution objects.
- * @param createClone Function used to create clones of the session state.
+ * @param sharedState                  跨会话共享的状态，例如全局视图管理器、外部目录。
+ * @param conf                         SQLConf 特定的配置。
+ * @param experimentalMethods          用于添加自定义规划策略和优化器的接口。
+ * @param functionRegistry             用于管理用户注册函数的内部目录。
+ * @param udfRegistration              暴露给用户用于注册用户自定义函数的接口。
+ * @param catalogBuilder               用于创建管理表和数据库状态的内部目录的函数。
+ * @param sqlParser                    从 SQL 文本中提取表达式、计划、表标识符等的解析器。
+ * @param analyzerBuilder              用于创建逻辑查询计划分析器以解析未解析的属性和关系的函数。
+ * @param optimizerBuilder             用于创建逻辑查询计划优化器的函数。
+ * @param planner                      将优化的逻辑计划转换为物理计划的规划器。
+ * @param streamingQueryManagerBuilder 用于创建流查询管理器以启动和停止流查询的函数。
+ * @param listenerManager              用于注册自定义 [[org.apache.spark.sql.util.QueryExecutionListener]] 的接口。
+ * @param resourceLoaderBuilder        用于创建会话共享资源加载器以加载 JAR、文件等的函数。
+ * @param createQueryExecution         用于创建 QueryExecution 对象的函数。
+ * @param createClone                  用于创建会话状态克隆的函数。
  */
 private[sql] class SessionState(
     sharedState: SharedState,
     val conf: SQLConf,
-    val experimentalMethods: ExperimentalMethods,
-    val functionRegistry: FunctionRegistry,
-    val tableFunctionRegistry: TableFunctionRegistry,
-    val udfRegistration: UDFRegistration,
-    catalogBuilder: () => SessionCatalog,
-    val sqlParser: ParserInterface,
-    analyzerBuilder: () => Analyzer,
-    optimizerBuilder: () => Optimizer,
-    val planner: SparkPlanner,
+    val experimentalMethods: ExperimentalMethods,          // 实现性的插装
+    val functionRegistry: FunctionRegistry,                /** 函数注册   : [[SparkSessionExtensions.registerFunctions(FunctionRegistry.builtin.clone())]] */
+    val tableFunctionRegistry: TableFunctionRegistry,      /** 表函数注册， 这些函数返回整个数据集 : SELECT * FROM range(1, 100); [[SparkSessionExtensions.registerTableFunctions(TableFunctionRegistry.builtin.clone())]] */
+    val udfRegistration: UDFRegistration,                  /** [[UDFRegistration(functionRegistry)]]  */
+    catalogBuilder: () => SessionCatalog,                  /** 对数据库，表，函数， 视图等操作的统一包装入口 : [[HiveSessionCatalog]]  */
+    val sqlParser: ParserInterface,                        /** SQL 解析器 : [[SparkSessionExtensions.buildParser(session, new SparkSqlParser())]] */
+    analyzerBuilder: () => Analyzer,                       /** 计划树元数据解析绑定 : [[HiveSessionStateBuilder.analyzer]]  */
+    optimizerBuilder: () => Optimizer,                     /** 计划树优化器 : [[BaseSessionStateBuilder.optimizer]]  */
+    val planner: SparkPlanner,                             /** 物理树适配器 : [[HiveSessionStateBuilder.planner]]  */
     val streamingQueryManagerBuilder: () => StreamingQueryManager,
-    val listenerManager: ExecutionListenerManager,
+    val listenerManager: ExecutionListenerManager,                                        // SparkSQL 执行监听器
     resourceLoaderBuilder: () => SessionResourceLoader,
-    createQueryExecution: (LogicalPlan, CommandExecutionMode.Value) => QueryExecution,
+    createQueryExecution: (LogicalPlan, CommandExecutionMode.Value) => QueryExecution,    // 基于LogicalPlan 的计划执行树
     createClone: (SparkSession, SessionState) => SessionState,
     val columnarRules: Seq[ColumnarRule],
     val queryStagePrepRules: Seq[Rule[SparkPlan]]) {
 
-  /**
-   * The following fields are lazy to avoid creating the Hive client when creating SessionState.
-   */
+  /** 以下字段是惰性的，以避免在创建 SessionState 时创建 Hive 客户端。 */
   lazy val catalog: SessionCatalog = catalogBuilder()
 
-  /**
-   * 解析器 [[BaseSessionStateBuilder.analyzer]]
-   */
+  /** 解析器 [[BaseSessionStateBuilder.analyzer]] */
   lazy val analyzer: Analyzer = analyzerBuilder()
 
-  /**
-   * 优化器 [[BaseSessionStateBuilder.optimizer]]
-   */
+  /** 优化器 [[BaseSessionStateBuilder.optimizer]] */
   lazy val optimizer: Optimizer = optimizerBuilder()
 
+  // Spark 资源管理
   lazy val resourceLoader: SessionResourceLoader = resourceLoaderBuilder()
 
-  // The streamingQueryManager is lazy to avoid creating a StreamingQueryManager for each session
-  // when connecting to ThriftServer.
+  // streamingQueryManager 是惰性的，以避免在连接到 ThriftServer 时为每个会话创建 StreamingQueryManager。
   lazy val streamingQueryManager: StreamingQueryManager = streamingQueryManagerBuilder()
 
+  /** [[CatalogManager(V2SessionCatalog(catalog), catalog)]]  */
   def catalogManager: CatalogManager = analyzer.catalogManager
 
-  def newHadoopConf(): Configuration = SessionState.newHadoopConf(
-    sharedState.sparkContext.hadoopConfiguration,
-    conf)
+  // Hadoop Configuration
+  def newHadoopConf(): Configuration = SessionState.newHadoopConf(sharedState.sparkContext.hadoopConfiguration, conf)
 
   def newHadoopConfWithOptions(options: Map[String, String]): Configuration = {
     val hadoopConf = newHadoopConf()
@@ -122,18 +111,14 @@ private[sql] class SessionState(
     hadoopConf
   }
 
-  /**
-   * Get an identical copy of the `SessionState` and associate it with the given `SparkSession`
-   */
+  /** 获取 `SessionState` 的相同副本并将其与给定的 `SparkSession` 关联 */
   def clone(newSparkSession: SparkSession): SessionState = createClone(newSparkSession, this)
 
   // ------------------------------------------------------
-  //  Helper methods, partially leftover from pre-2.0 days
+  //  辅助方法，部分是 2.0 之前版本遗留下来的
   // ------------------------------------------------------
 
-  def executePlan(
-      plan: LogicalPlan,
-      mode: CommandExecutionMode.Value = CommandExecutionMode.ALL): QueryExecution =
+  def executePlan(plan: LogicalPlan, mode: CommandExecutionMode.Value = CommandExecutionMode.ALL): QueryExecution =
     createQueryExecution(plan, mode)
 }
 
@@ -145,9 +130,7 @@ private[sql] object SessionState {
   }
 }
 
-/**
- * Concrete implementation of a [[BaseSessionStateBuilder]].
- */
+/** [[BaseSessionStateBuilder]] 具体实现 */
 @Unstable
 class SessionStateBuilder(
     session: SparkSession,
@@ -156,9 +139,7 @@ class SessionStateBuilder(
   override protected def newBuilder: NewBuilder = new SessionStateBuilder(_, _)
 }
 
-/**
- * Session shared [[FunctionResourceLoader]].
- */
+/** Session 共享 [[FunctionResourceLoader]]. */
 @Unstable
 class SessionResourceLoader(session: SparkSession) extends FunctionResourceLoader {
   override def loadResource(resource: FunctionResource): Unit = {
@@ -177,11 +158,10 @@ class SessionResourceLoader(session: SparkSession) extends FunctionResourceLoade
   }
 
   /**
-   * Add a jar path to [[SparkContext]] and the classloader.
+   * 将 jar 路径添加到 [[SparkContext]] 和类加载器。
    *
-   * Note: this method seems not access any session state, but a Hive based `SessionState` needs
-   * to add the jar to its hive client for the current session. Hence, it still needs to be in
-   * [[SessionState]].
+   * 注意：此方法似乎不访问任何会话状态，但基于 Hive 的 `SessionState` 需要将 jar 添加到其 hive 客户端以用于当前会话。
+   * 因此，它仍然需要在[[SessionState]] 中。
    */
   def addJar(path: String): Unit = {
     val uri = Utils.resolveURI(path)
@@ -189,10 +169,10 @@ class SessionResourceLoader(session: SparkSession) extends FunctionResourceLoade
       session.sparkContext.addJar(p)
       val uri = new Path(p).toUri
       val jarURL = if (uri.getScheme == null) {
-        // `path` is a local file path without a URL scheme
+        // `path` 是没有 URL 方案的本地文件路径
         new File(p).toURI.toURL
       } else {
-        // `path` is a URL with a scheme
+        // `path` 是带有方案的 URL
         uri.toURL
       }
       session.sharedState.jarClassLoader.addURL(jarURL)

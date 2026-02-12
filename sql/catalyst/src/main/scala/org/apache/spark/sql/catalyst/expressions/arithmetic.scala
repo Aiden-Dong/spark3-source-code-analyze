@@ -171,6 +171,7 @@ case class Abs(child: Expression, failOnError: Boolean = SQLConf.get.ansiEnabled
     case _ => TypeUtils.getNumeric(dataType, failOnError)
   }).asInstanceOf[Numeric[Any]]
 
+  // Codegen 定义区
   override def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = dataType match {
     case _: DecimalType =>
       defineCodeGen(ctx, ev, c => s"$c.abs()")

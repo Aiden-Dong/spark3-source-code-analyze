@@ -128,7 +128,7 @@ private[hive] object HiveShim {
    * @param clazz optional class instance to create UDF instance
    */
   private[hive] case class HiveFunctionWrapper(
-      var functionClassName: String,
+      var functionClassName: String,             // UDF 函数类名
       private var instance: AnyRef = null,
       private var clazz: Class[_ <: AnyRef] = null) extends java.io.Externalizable {
 

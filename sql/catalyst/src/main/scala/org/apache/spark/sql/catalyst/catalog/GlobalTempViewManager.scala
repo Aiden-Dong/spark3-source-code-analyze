@@ -26,31 +26,28 @@ import org.apache.spark.sql.catalyst.util.StringUtils
 import org.apache.spark.sql.errors.QueryCompilationErrors
 
 
+
 /**
- * A thread-safe manager for global temporary views, providing atomic operations to manage them,
- * e.g. create, update, remove, etc.
+ * 一个线程安全的全局临时视图管理器，提供原子操作来管理它们， 例如创建、更新、删除等。
+ * 注意，视图名称在这里始终是大小写敏感的，调用者需要根据大小写敏感配置来格式化视图名称。
  *
- * Note that, the view name is always case-sensitive here, callers are responsible to format the
- * view name w.r.t. case-sensitive config.
- *
- * @param database The system preserved virtual database that keeps all the global temporary views.
+ * @param database 系统保留的虚拟数据库，用于保存所有全局临时视图。 spark.sql.globalTempDatabase : global_temp
  */
 class GlobalTempViewManager(val database: String) {
 
-  /** List of view definitions, mapping from view name to logical plan. */
+  /** 视图定义列表，从视图名称映射到逻辑计划。 */
   @GuardedBy("this")
   private val viewDefinitions = new mutable.HashMap[String, TemporaryViewRelation]
 
   /**
-   * Returns the global view definition which matches the given name, or None if not found.
+   * 返回与给定名称匹配的全局视图定义，如果未找到则返回 None。
    */
   def get(name: String): Option[TemporaryViewRelation] = synchronized {
     viewDefinitions.get(name)
   }
 
   /**
-   * Creates a global temp view, or issue an exception if the view already exists and
-   * `overrideIfExists` is false.
+   * 创建一个全局临时视图，如果视图已存在且 `overrideIfExists` 为 false， 则抛出异常。
    */
   def create(
       name: String,
@@ -63,7 +60,7 @@ class GlobalTempViewManager(val database: String) {
   }
 
   /**
-   * Updates the global temp view if it exists, returns true if updated, false otherwise.
+   * 如果全局临时视图存在则更新它，更新成功返回 true，否则返回 false。
    */
   def update(
       name: String,
@@ -77,16 +74,16 @@ class GlobalTempViewManager(val database: String) {
   }
 
   /**
-   * Removes the global temp view if it exists, returns true if removed, false otherwise.
+   * 如果全局临时视图存在则删除它，删除成功返回 true，否则返回 false。
    */
   def remove(name: String): Boolean = synchronized {
     viewDefinitions.remove(name).isDefined
   }
 
   /**
-   * Renames the global temp view if the source view exists and the destination view not exists, or
-   * issue an exception if the source view exists but the destination view already exists. Returns
-   * true if renamed, false otherwise.
+   * 如果源视图存在且目标视图不存在，则重命名全局临时视图；
+   * 如果源视图存在但目标视图已存在，则抛出异常。
+   * 重命名成功返回 true，否则返回 false。
    */
   def rename(oldName: String, newName: String): Boolean = synchronized {
     if (viewDefinitions.contains(oldName)) {
@@ -104,14 +101,14 @@ class GlobalTempViewManager(val database: String) {
   }
 
   /**
-   * Lists the names of all global temporary views.
+   * 列出所有全局临时视图的名称。
    */
   def listViewNames(pattern: String): Seq[String] = synchronized {
     StringUtils.filterPattern(viewDefinitions.keys.toSeq, pattern)
   }
 
   /**
-   * Clears all the global temporary views.
+   * 清除所有全局临时视图。
    */
   def clear(): Unit = synchronized {
     viewDefinitions.clear()

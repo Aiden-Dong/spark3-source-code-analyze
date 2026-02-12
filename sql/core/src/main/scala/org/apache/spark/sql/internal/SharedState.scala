@@ -43,6 +43,10 @@ import org.apache.spark.util.Utils
 /**
  * 一个类，用于保存给定 [[SQLContext]] 中跨会话共享的所有状态。
  *
+ *   关键 :
+ *      GlobalTempViewManager
+ *      CacheManager
+ *
  * @param sparkContext 与此 SharedState 关联的 Spark 上下文
  * @param initialConfigs 来自第一个创建的 SparkSession 的配置
  */

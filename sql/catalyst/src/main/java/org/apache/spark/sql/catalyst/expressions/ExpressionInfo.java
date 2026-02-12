@@ -27,18 +27,18 @@ import java.util.Set;
  * Expression information, will be used to describe a expression.
  */
 public class ExpressionInfo {
-    private String className;
-    private String usage;
-    private String name;
-    private String extended;
-    private String db;
-    private String arguments;
-    private String examples;
-    private String note;
-    private String group;
-    private String since;
-    private String deprecated;
-    private String source;
+    private String className;              // 表达式的 Java/Scala 类全名，用于反射创建实例
+    private String usage;                  // 一句话描述函数用法 | "abs(expr) - 返回绝对值"
+    private String name;                   //  SQL 中的函数名
+    private String extended;               // 自动生成，= arguments + examples，用于 DESCRIBE FUNCTION EXTENDED | 组合后的完整文档
+    private String db;                     // 所属数据库（内置函数为 null） | null 或 "my_db" |
+    private String arguments;              // 参数的详细文档 | "Arguments:\n  * expr - 数值表达式"
+    private String examples;               // SQL 使用示例 | "Examples:\n  > SELECT abs(-1);\n   1" |
+    private String note;                   // 特殊说明或注意事项 | "Note: 输入 null 返回 null" |
+    private String group;                  // 函数分类，用于文档分组 | "math_funcs", "string_funcs", "agg_funcs" |
+    private String since;                  // 引入的 Spark 版本 | "1.5.0", "3.0.0" |
+    private String deprecated;             // 废弃说明（空表示未废弃）
+    private String source;                 // 函数来源类型
 
     private static final Set<String> validGroups =
         new HashSet<>(Arrays.asList("agg_funcs", "array_funcs", "binary_funcs", "bitwise_funcs",

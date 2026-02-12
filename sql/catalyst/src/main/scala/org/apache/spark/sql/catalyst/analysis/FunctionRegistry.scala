@@ -70,7 +70,7 @@ trait FunctionRegistryBase[T] {
     info: ExpressionInfo,
     builder: FunctionBuilder): Unit
 
-  /* Create or replace a temporary function. */
+  /* 创建或替换临时函数。 */
   final def createOrReplaceTempFunction(
       name: String, builder: FunctionBuilder, source: String): Unit = {
     registerFunction(
@@ -82,77 +82,74 @@ trait FunctionRegistryBase[T] {
   @throws[AnalysisException]("If function does not exist")
   def lookupFunction(name: FunctionIdentifier, children: Seq[Expression]): T
 
-  /* List all of the registered function names. */
+  /* 列出所有已注册的函数名称。 */
   def listFunction(): Seq[FunctionIdentifier]
 
-  /* Get the class of the registered function by specified name. */
+  /* 根据指定名称获取已注册函数的类。 */
   def lookupFunction(name: FunctionIdentifier): Option[ExpressionInfo]
 
-  /* Get the builder of the registered function by specified name. */
+  /* 根据指定名称获取已注册函数的构建器。 */
   def lookupFunctionBuilder(name: FunctionIdentifier): Option[FunctionBuilder]
 
-  /** Drop a function and return whether the function existed. */
+  /** 删除函数并返回该函数是否存在。 */
   def dropFunction(name: FunctionIdentifier): Boolean
 
-  /** Checks if a function with a given name exists. */
+  /** 检查给定名称的函数是否存在。 */
   def functionExists(name: FunctionIdentifier): Boolean = lookupFunction(name).isDefined
 
-  /** Clear all registered functions. */
+  /** 清除所有已注册的函数。 */
   def clear(): Unit
 }
 
 object FunctionRegistryBase {
 
-  /**
-   * Return an expression info and a function builder for the function as defined by
-   * T using the given name.
-   */
-  def build[T : ClassTag](
-      name: String,
-      since: Option[String]): (ExpressionInfo, Seq[Expression] => T) = {
+  /** 返回由 T 定义的函数的表达式信息和函数构建器，使用给定的名称。 */
+  def build[T : ClassTag](name: String, since: Option[String]): (ExpressionInfo, Seq[Expression] => T) = {
+
+    // 通过反射获取类型 T 的运行时 Class 对象。
     val runtimeClass = scala.reflect.classTag[T].runtimeClass
-    // For `InheritAnalysisRules`, skip the constructor with most arguments, which is the main
-    // constructor and contains non-parameter `replacement` and should not be used as
-    // function builder.
+
+    // 检查 T 是否是 InheritAnalysisRules 的子类。
     val isRuntime = classOf[InheritAnalysisRules].isAssignableFrom(runtimeClass)
+
     val constructors = if (isRuntime) {
-      val all = runtimeClass.getConstructors
+      val all = runtimeClass.getConstructors            // 获取构造函数
       val maxNumArgs = all.map(_.getParameterCount).max
-      all.filterNot(_.getParameterCount == maxNumArgs)
+      all.filterNot(_.getParameterCount == maxNumArgs) // 过滤掉参数最多的主构造函数（因为它包含 replacement 参数，不应该用作函数构建器）
     } else {
-      runtimeClass.getConstructors
+      runtimeClass.getConstructors                     // 获取构造函数
     }
-    // See if we can find a constructor that accepts Seq[Expression]
+    // 查看是否可以找到接受 Seq[Expression] 的构造函数
+    // 因为类型擦除， 并不能知道类型具体是否是 Seq[Expression]
     val varargCtor = constructors.find(_.getParameterTypes.toSeq == Seq(classOf[Seq[_]]))
+
+    // 定义构造器
     val builder = (expressions: Seq[Expression]) => {
-      if (varargCtor.isDefined) {
-        // If there is an apply method that accepts Seq[Expression], use that one.
+      if (varargCtor.isDefined) {           // builder : (seq[expression]) => T
+        // 如果有接受 Seq[Expression] 的 apply 方法，使用它。
         try {
           varargCtor.get.newInstance(expressions).asInstanceOf[T]
         } catch {
-          // the exception is an invocation exception. To get a meaningful message, we need the
-          // cause.
+          // 异常是调用异常。要获得有意义的消息，我们需要原因。
           case e: Exception =>
             throw e.getCause match {
               case ae: SparkThrowable => ae
               case _ => new AnalysisException(e.getCause.getMessage)
             }
         }
-      } else {
-        // Otherwise, find a constructor method that matches the number of arguments, and use that.
-        val params = Seq.fill(expressions.size)(classOf[Expression])
-        val f = constructors.find(_.getParameterTypes.toSeq == params).getOrElse {
+      } else {                              // builder : (expression, expresion, ...) => T
+        // 否则，找到与参数数量匹配的构造函数方法，并使用它。
+        val params = Seq.fill(expressions.size)(classOf[Expression])                // 创建一个包含n个Expression.class 的序列
+        val f = constructors.find(_.getParameterTypes.toSeq == params).getOrElse {  // 表示他是一个 (Expresion, Expresion,... ) 类型
           val validParametersCount = constructors
-            .filter(_.getParameterTypes.forall(_ == classOf[Expression]))
-            .map(_.getParameterCount).distinct.sorted
-          throw QueryCompilationErrors.invalidFunctionArgumentNumberError(
-            validParametersCount, name, params.length)
+            .filter(_.getParameterTypes.forall(_ == classOf[Expression]))           // 找到所有的只包含 Expression 类型的参数
+            .map(_.getParameterCount).distinct.sorted                               // 按照数量进行排序
+          throw QueryCompilationErrors.invalidFunctionArgumentNumberError(validParametersCount, name, params.length)  // 报错提示
         }
         try {
           f.newInstance(expressions : _*).asInstanceOf[T]
         } catch {
-          // the exception is an invocation exception. To get a meaningful message, we need the
-          // cause.
+          // 异常是调用异常。要获得有意义的消息，我们需要原因。
           case e: Exception => throw new AnalysisException(e.getCause.getMessage)
         }
       }
@@ -161,16 +158,17 @@ object FunctionRegistryBase {
     (expressionInfo(name, since), builder)
   }
 
+
   /**
-   * Creates an [[ExpressionInfo]] for the function as defined by T using the given name.
+   * Creates an [[ExpressionInfo]] for the function as defined by 使用给定的名称。
    */
   def expressionInfo[T : ClassTag](name: String, since: Option[String]): ExpressionInfo = {
-    val clazz = scala.reflect.classTag[T].runtimeClass
-    val df = clazz.getAnnotation(classOf[ExpressionDescription])
+    val clazz = scala.reflect.classTag[T].runtimeClass              // 获取当前类的运行时实例
+    val df = clazz.getAnnotation(classOf[ExpressionDescription])    // 获取当前类注解
     if (df != null) {
       if (df.extended().isEmpty) {
         new ExpressionInfo(
-          clazz.getCanonicalName.stripSuffix("$"),
+          clazz.getCanonicalName.stripSuffix("$"),    // 类名
           null,
           name,
           df.usage(),
@@ -182,8 +180,8 @@ object FunctionRegistryBase {
           df.deprecated(),
           df.source())
       } else {
-        // This exists for the backward compatibility with old `ExpressionDescription`s defining
-        // the extended description in `extended()`.
+        // 这是为了向后兼容旧的 ExpressionDescription，它们在
+        // extended() 中定义扩展描述。
         new ExpressionInfo(
           clazz.getCanonicalName.stripSuffix("$"), null, name, df.usage(), df.extended())
       }
@@ -196,31 +194,24 @@ object FunctionRegistryBase {
 trait SimpleFunctionRegistryBase[T] extends FunctionRegistryBase[T] with Logging {
 
   @GuardedBy("this")
-  protected val functionBuilders =
-    new mutable.HashMap[FunctionIdentifier, (ExpressionInfo, FunctionBuilder)]
+  protected val functionBuilders = new mutable.HashMap[FunctionIdentifier, (ExpressionInfo, FunctionBuilder)]
 
-  // Resolution of the function name is always case insensitive, but the database name
-  // depends on the caller
+  // 函数名称的解析始终不区分大小写，但数据库名称
+  // 取决于调用者
   private def normalizeFuncName(name: FunctionIdentifier): FunctionIdentifier = {
     FunctionIdentifier(name.funcName.toLowerCase(Locale.ROOT), name.database)
   }
 
-  override def registerFunction(
-      name: FunctionIdentifier,
-      info: ExpressionInfo,
-      builder: FunctionBuilder): Unit = {
+  override def registerFunction(name: FunctionIdentifier, info: ExpressionInfo, builder: FunctionBuilder): Unit = {
     val normalizedName = normalizeFuncName(name)
     internalRegisterFunction(normalizedName, info, builder)
   }
 
   /**
-   * Perform function registry without any preprocessing.
-   * This is used when registering built-in functions and doing `FunctionRegistry.clone()`
+   * 执行函数注册而不进行任何预处理。
+   * 这在注册内置函数和执行 FunctionRegistry.clone() 时使用
    */
-  def internalRegisterFunction(
-      name: FunctionIdentifier,
-      info: ExpressionInfo,
-      builder: FunctionBuilder): Unit = synchronized {
+  def internalRegisterFunction(name: FunctionIdentifier, info: ExpressionInfo, builder: FunctionBuilder): Unit = synchronized {
     val newFunction = (info, builder)
     functionBuilders.put(name, newFunction) match {
       case Some(previousFunction) if previousFunction != newFunction =>
@@ -261,8 +252,8 @@ trait SimpleFunctionRegistryBase[T] extends FunctionRegistryBase[T] with Logging
 }
 
 /**
- * A trivial catalog that returns an error when a function is requested. Used for testing when all
- * functions are already filled in and the analyzer needs only to resolve attribute references.
+ * 一个简单的目录，当请求函数时返回错误。用于测试，当所有
+ * 函数都已填充，分析器只需要解析属性引用时使用。
  */
 trait EmptyFunctionRegistryBase[T] extends FunctionRegistryBase[T] {
   override def registerFunction(
@@ -297,7 +288,7 @@ trait EmptyFunctionRegistryBase[T] extends FunctionRegistryBase[T] {
 
 trait FunctionRegistry extends FunctionRegistryBase[Expression] {
 
-  /** Create a copy of this registry with identical functions as this registry. */
+  /** 创建此注册表的副本，其中包含与此注册表相同的函数。 */
   override def clone(): FunctionRegistry = throw new CloneNotSupportedException()
 }
 
@@ -328,48 +319,40 @@ object FunctionRegistry {
   val FUNC_ALIAS = TreeNodeTag[String]("functionAliasName")
 
   // ==============================================================================================
-  //                          The guideline for adding SQL functions
+  //                          添加 SQL 函数的指南
   // ==============================================================================================
-  // To add a SQL function, we usually need to create a new `Expression` for the function, and
-  // implement the function logic in both the interpretation code path and codegen code path of the
-  // `Expression`. We also need to define the type coercion behavior for the function inputs, by
-  // extending `ImplicitCastInputTypes` or updating type coercion rules directly.
+  // 要添加 SQL 函数，我们通常需要为该函数创建一个新的 Expression， 并在 Expression 的解释代码路径和代码生成路径中实现函数逻辑。
+  // 我们还需要通过扩展 ImplicitCastInputTypes 或直接更新类型强制转换规则来定义函数输入的类型强制转换行为。
   //
-  // It's much simpler if the SQL function can be implemented with existing expression(s). There are
-  // a few cases:
-  //   - The function is simply an alias of another function. We can just register the same
-  //     expression with a different function name, e.g. `expression[Rand]("random", true)`.
-  //   - The function is mostly the same with another function, but has a different parameter list.
-  //     We can use `RuntimeReplaceable` to create a new expression, which can customize the
-  //     parameter list and analysis behavior (type coercion). The `RuntimeReplaceable` expression
-  //     will be replaced by the actual expression at the end of analysis. See `Left` as an example.
-  //   - The function can be implemented by combining some existing expressions. We can use
-  //     `RuntimeReplaceable` to define the combination. See `ParseToDate` as an example.
-  //     To inherit the analysis behavior from the replacement expression
-  //     mix-in `InheritAnalysisRules` with `RuntimeReplaceable`. See `TryAdd` as an example.
-  //   - For `AggregateFunction`, `RuntimeReplaceableAggregate` should be mixed-in. See
-  //     `CountIf` as an example.
+  // 如果 SQL 函数可以用现有表达式实现，则会简单得多。有几种情况：
   //
-  // Sometimes, multiple functions share the same/similar expression replacement logic and it's
-  // tedious to create many similar `RuntimeReplaceable` expressions. We can use `ExpressionBuilder`
-  // to share the replacement logic. See `ParseToTimestampLTZExpressionBuilder` as an example.
+  //   - 函数只是另一个函数的别名。我们可以用不同的函数名称注册相同的表达式， 例如 expression[Rand]("random", true)。
+  //   - 函数与另一个函数基本相同，但参数列表不同。
+  //     我们可以使用 RuntimeReplaceable 创建新表达式，它可以自定义参数列表和分析行为（类型强制转换）。
+  //     RuntimeReplaceable 表达式将在分析结束时被实际表达式替换。参见 Left 作为示例。
+  //   - 函数可以通过组合一些现有表达式来实现。我们可以使用 RuntimeReplaceable 来定义组合。
+  //     参见 ParseToDate 作为示例。 要从替换表达式继承分析行为，请将 InheritAnalysisRules 与 RuntimeReplaceable 混合使用。
+  //     参见 TryAdd 作为示例。
+  //   - 对于 AggregateFunction，应该混合使用 RuntimeReplaceableAggregate。 参见 CountIf 作为示例。
   //
-  // With these tools, we can even implement a new SQL function with a Java (static) method, and
-  // then create a `RuntimeReplaceable` expression to call the Java method with `Invoke` or
-  // `StaticInvoke` expression. By doing so we don't need to implement codegen for new functions
-  // anymore. See `AesEncrypt`/`AesDecrypt` as an example.
+  // 有时，多个函数共享相同/相似的表达式替换逻辑，创建许多相似的 RuntimeReplaceable 表达式会很繁琐。
+  // 我们可以使用 ExpressionBuilder 来共享替换逻辑。 参见 ParseToTimestampLTZExpressionBuilder 作为示例。
+  //
+  // 使用这些工具，我们甚至可以用 Java（静态）方法实现新的 SQL 函数，
+  // 然后创建一个 RuntimeReplaceable 表达式，使用 Invoke 或 StaticInvoke 表达式 调用 Java 方法。
+  // 这样我们就不需要再为新函数实现代码生成了。 参见 AesEncrypt/AesDecrypt 作为示例。
   val expressionsForTimestampNTZSupport: Map[String, (ExpressionInfo, FunctionBuilder)] =
-    // SPARK-38813: Remove TimestampNTZ type support in Spark 3.3 with minimal code changes.
+    // SPARK-38813：在 Spark 3.3 中以最小的代码更改删除 TimestampNTZ 类型支持。
     if (Utils.isTesting) {
       Map(
         expression[LocalTimestamp]("localtimestamp"),
         expression[ConvertTimezone]("convert_timezone"),
-        // We keep the 2 expression builders below to have different function docs.
+        // 我们保留下面的 2 个表达式构建器以具有不同的函数文档。
         expressionBuilder(
           "to_timestamp_ntz", ParseToTimestampNTZExpressionBuilder, setAlias = true),
         expressionBuilder(
           "to_timestamp_ltz", ParseToTimestampLTZExpressionBuilder, setAlias = true),
-        // We keep the 2 expression builders below to have different function docs.
+        // 我们保留下面的 2 个表达式构建器以具有不同的函数文档。
         expressionBuilder("make_timestamp_ntz", MakeTimestampNTZExpressionBuilder, setAlias = true),
         expressionBuilder("make_timestamp_ltz", MakeTimestampLTZExpressionBuilder, setAlias = true)
       )
@@ -377,9 +360,9 @@ object FunctionRegistry {
       Map.empty
     }
 
-  // Note: Whenever we add a new entry here, make sure we also update ExpressionToSQLSuite
+  // 注意： Whenever we add a new entry here, make sure we also update ExpressionToSQLSuite
   val expressions: Map[String, (ExpressionInfo, FunctionBuilder)] = Map(
-    // misc non-aggregate functions
+    // 杂项非聚合函数
     expression[Abs]("abs"),
     expression[Coalesce]("coalesce"),
     expression[Explode]("explode"),
@@ -405,7 +388,7 @@ object FunctionRegistry {
     expression[Stack]("stack"),
     expression[CaseWhen]("when"),
 
-    // math functions
+    // 数学函数
     expression[Acos]("acos"),
     expression[Acosh]("acosh"),
     expression[Asin]("asin"),
@@ -467,7 +450,7 @@ object FunctionRegistry {
     expression[IntegralDivide]("div"),
     expression[Remainder]("%"),
 
-    // "try_*" function which always return Null instead of runtime error.
+    // "try_*" 函数，总是返回 Null 而不是运行时错误。
     expression[TryAdd]("try_add"),
     expression[TryDivide]("try_divide"),
     expression[TrySubtract]("try_subtract"),
@@ -477,7 +460,7 @@ object FunctionRegistry {
     expression[TrySum]("try_sum"),
     expression[TryToBinary]("try_to_binary"),
 
-    // aggregate functions
+    // 聚合函数
     expression[HyperLogLogPlusPlus]("approx_count_distinct"),
     expression[Average]("avg"),
     expression[Corr]("corr"),
@@ -522,7 +505,7 @@ object FunctionRegistry {
     expression[RegrAvgY]("regr_avgy"),
     expression[RegrR2]("regr_r2"),
 
-    // string functions
+    // 字符串函数
     expression[Ascii]("ascii"),
     expression[Chr]("char", true),
     expression[Chr]("chr"),
@@ -597,7 +580,7 @@ object FunctionRegistry {
     expression[XPathShort]("xpath_short"),
     expression[XPathString]("xpath_string"),
 
-    // datetime functions
+    // 日期时间函数
     expression[AddMonths]("add_months"),
     expression[CurrentDate]("current_date"),
     expression[CurrentTimestamp]("current_timestamp"),
@@ -651,7 +634,7 @@ object FunctionRegistry {
     expression[UnixMillis]("unix_millis"),
     expression[UnixMicros]("unix_micros"),
 
-    // collection functions
+    // 集合函数
     expression[CreateArray]("array"),
     expression[ArrayContains]("array_contains"),
     expression[ArraysOverlap]("arrays_overlap"),
@@ -700,7 +683,7 @@ object FunctionRegistry {
 
     CreateStruct.registryEntry,
 
-    // misc functions
+    // 杂项函数
     expression[AssertTrue]("assert_true"),
     expression[RaiseError]("raise_error"),
     expression[Crc32]("crc32"),
@@ -726,11 +709,11 @@ object FunctionRegistry {
     expression[SparkVersion]("version"),
     expression[TypeOf]("typeof"),
 
-    // grouping sets
+    // 分组集
     expression[Grouping]("grouping"),
     expression[GroupingID]("grouping_id"),
 
-    // window functions
+    // 窗口函数
     expression[Lead]("lead"),
     expression[Lag]("lag"),
     expression[RowNumber]("row_number"),
@@ -741,13 +724,13 @@ object FunctionRegistry {
     expression[DenseRank]("dense_rank"),
     expression[PercentRank]("percent_rank"),
 
-    // predicates
+    // 谓词
     expression[And]("and"),
     expression[In]("in"),
     expression[Not]("not"),
     expression[Or]("or"),
 
-    // comparison operators
+    // 比较运算符
     expression[EqualNullSafe]("<=>"),
     expression[EqualTo]("="),
     expression[EqualTo]("=="),
@@ -757,7 +740,7 @@ object FunctionRegistry {
     expression[LessThanOrEqual]("<="),
     expression[Not]("!"),
 
-    // bitwise
+    // 按位运算
     expression[BitwiseAnd]("&"),
     expression[BitwiseNot]("~"),
     expression[BitwiseOr]("|"),
@@ -776,9 +759,9 @@ object FunctionRegistry {
     expression[LengthOfJsonArray]("json_array_length"),
     expression[JsonObjectKeys]("json_object_keys"),
 
-    // cast
+    // 类型转换
     expression[Cast]("cast"),
-    // Cast aliases (SPARK-16730)
+    // 类型转换别名（SPARK-16730）
     castAlias("boolean", BooleanType),
     castAlias("tinyint", ByteType),
     castAlias("smallint", ShortType),
@@ -798,6 +781,7 @@ object FunctionRegistry {
     expression[StructsToCsv]("to_csv")
   ) ++ expressionsForTimestampNTZSupport
 
+  //////////////  内置的普通函数处理集合 //////////////
   val builtin: SimpleFunctionRegistry = {
     val fr = new SimpleFunctionRegistry
     expressions.foreach {
@@ -841,23 +825,28 @@ object FunctionRegistry {
   )
 
   /**
-   * Create a SQL function builder and corresponding `ExpressionInfo`.
-   * @param name The function name.
-   * @param setAlias The alias name used in SQL representation string.
-   * @param since The Spark version since the function is added.
-   * @tparam T The actual expression class.
-   * @return (function name, (expression information, function builder))
+   * 创建 SQL 函数构建器和相应的 ExpressionInfo。
+   * @param name     函数名称。
+   * @param setAlias SQL 表示字符串中使用的别名。
+   * @param since    添加函数的 Spark 版本。
+   * @tparam T       实际的表达式类。
+   * @return (函数名称, (表达式信息, 函数构建器))
    */
   private def expression[T <: Expression : ClassTag](
       name: String,
       setAlias: Boolean = false,
       since: Option[String] = None): (String, (ExpressionInfo, FunctionBuilder)) = {
+
+    // 基于反射，构建函数表达式构建信息 : (ExpressionInfo, FunctionBuilder)
     val (expressionInfo, builder) = FunctionRegistryBase.build[T](name, since)
+
+    // FunctionBuilder 分装器， 增加 ExpressionTag
     val newBuilder = (expressions: Seq[Expression]) => {
       val expr = builder(expressions)
       if (setAlias) expr.setTagValue(FUNC_ALIAS, name)
       expr
     }
+    // (函数名, (函数表达式信息， 函数构建方法))
     (name, (expressionInfo, newBuilder))
   }
 
@@ -865,21 +854,23 @@ object FunctionRegistry {
       name: String,
       builder: T,
       setAlias: Boolean = false): (String, (ExpressionInfo, FunctionBuilder)) = {
+
     val info = FunctionRegistryBase.expressionInfo[T](name, None)
+
     val funcBuilder = (expressions: Seq[Expression]) => {
       assert(expressions.forall(_.resolved), "function arguments must be resolved.")
       val expr = builder.build(name, expressions)
       if (setAlias) expr.setTagValue(FUNC_ALIAS, name)
       expr
     }
+
     (name, (info, funcBuilder))
   }
 
   /**
-   * Creates a function registry lookup entry for cast aliases (SPARK-16730).
-   * For example, if name is "int", and dataType is IntegerType, this means int(x) would become
-   * an alias for cast(x as IntegerType).
-   * See usage above.
+   * 为类型转换别名创建函数注册表查找条目（SPARK-16730）。
+   * 例如，如果 name 是 "int"，dataType 是 IntegerType，这意味着 int(x) 将成为cast(x as IntegerType) 的别名。
+   * 参见上面的用法。
    */
   private def castAlias(
       name: String,
@@ -909,11 +900,11 @@ object FunctionRegistry {
 }
 
 /**
- * A catalog for looking up table functions.
+ * 用于查找表函数的目录。
  */
 trait TableFunctionRegistry extends FunctionRegistryBase[LogicalPlan] {
 
-  /** Create a copy of this registry with identical functions as this registry. */
+  /** 创建此注册表的副本，其中包含与此注册表相同的函数。 */
   override def clone(): TableFunctionRegistry = throw new CloneNotSupportedException()
 }
 
@@ -959,6 +950,7 @@ object TableFunctionRegistry {
     logicalPlan[Range]("range")
   )
 
+  ////////////// 内置的表函数处理集合 //////////////
   val builtin: SimpleTableFunctionRegistry = {
     val fr = new SimpleTableFunctionRegistry
     logicalPlans.foreach {

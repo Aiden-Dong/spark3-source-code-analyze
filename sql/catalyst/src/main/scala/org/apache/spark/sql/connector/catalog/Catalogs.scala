@@ -44,13 +44,16 @@ private[sql] object Catalogs {
   @throws[CatalogNotFoundException]
   @throws[SparkException]
   def load(name: String, conf: SQLConf): CatalogPlugin = {
+
     val pluginClassName = try {
       conf.getConfString("spark.sql.catalog." + name)
     } catch {
       case _: NoSuchElementException =>
         throw QueryExecutionErrors.catalogPluginClassNotFoundError(name)
     }
+
     val loader = Utils.getContextOrSparkClassLoader
+
     try {
       val pluginClass = loader.loadClass(pluginClassName)
       if (!classOf[CatalogPlugin].isAssignableFrom(pluginClass)) {
@@ -59,22 +62,18 @@ private[sql] object Catalogs {
       val plugin = pluginClass.getDeclaredConstructor().newInstance().asInstanceOf[CatalogPlugin]
       plugin.initialize(name, catalogOptions(name, conf))
       plugin
+
     } catch {
       case e: ClassNotFoundException =>
-        throw QueryExecutionErrors.catalogPluginClassNotFoundForCatalogError(
-          name, pluginClassName, e)
+        throw QueryExecutionErrors.catalogPluginClassNotFoundForCatalogError(name, pluginClassName, e)
       case e: NoSuchMethodException =>
-        throw QueryExecutionErrors.catalogFailToFindPublicNoArgConstructorError(
-          name, pluginClassName, e)
+        throw QueryExecutionErrors.catalogFailToFindPublicNoArgConstructorError(name, pluginClassName, e)
       case e: IllegalAccessException =>
-        throw QueryExecutionErrors.catalogFailToCallPublicNoArgConstructorError(
-          name, pluginClassName, e)
+        throw QueryExecutionErrors.catalogFailToCallPublicNoArgConstructorError(name, pluginClassName, e)
       case e: InstantiationException =>
-        throw QueryExecutionErrors.cannotInstantiateAbstractCatalogPluginClassError(
-          name, pluginClassName, e)
+        throw QueryExecutionErrors.cannotInstantiateAbstractCatalogPluginClassError(name, pluginClassName, e)
       case e: InvocationTargetException =>
-        throw QueryExecutionErrors.failedToInstantiateConstructorForCatalogError(
-          name, pluginClassName, e)
+        throw QueryExecutionErrors.failedToInstantiateConstructorForCatalogError(name, pluginClassName, e)
     }
   }
 

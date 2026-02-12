@@ -155,43 +155,31 @@ object HiveUDFExpressionBuilder extends SparkUDFExpressionBuilder {
       try {
         super.makeExpression(name, clazz, input)
       } catch {
-        // If `super.makeFunctionExpression` throw `InvalidUDFClassException`, we construct
-        // Hive UDF/UDAF/UDTF with function definition. Otherwise, we just throw it earlier.
-        case _: InvalidUDFClassException =>
-          makeHiveFunctionExpression(name, clazz, input)
+        // 表示是HiveUDF, 需要进行 HiveUDF -> SparkUDF 转换操作
+        case _: InvalidUDFClassException => makeHiveFunctionExpression(name, clazz, input)
         case NonFatal(e) => throw e
       }
     }
   }
 
-  private def makeHiveFunctionExpression(
-      name: String,
-      clazz: Class[_],
-      input: Seq[Expression]): Expression = {
+  private def makeHiveFunctionExpression(name: String, clazz: Class[_], input: Seq[Expression]): Expression = {
     var udfExpr: Option[Expression] = None
+
     try {
-      // When we instantiate hive UDF wrapper class, we may throw exception if the input
-      // expressions don't satisfy the hive UDF, such as type mismatch, input number
-      // mismatch, etc. Here we catch the exception and throw AnalysisException instead.
-      if (classOf[UDF].isAssignableFrom(clazz)) {
+      if (classOf[UDF].isAssignableFrom(clazz)) {                                        /** [[UDF]]  --->   [[HiveSimpleUDF]] */
         udfExpr = Some(HiveSimpleUDF(name, new HiveFunctionWrapper(clazz.getName), input))
-        udfExpr.get.dataType // Force it to check input data types.
-      } else if (classOf[GenericUDF].isAssignableFrom(clazz)) {
+        udfExpr.get.dataType
+      } else if (classOf[GenericUDF].isAssignableFrom(clazz)) {                          /** [[GenericUDF]]  --->   [[HiveGenericUDF]] */
         udfExpr = Some(HiveGenericUDF(name, new HiveFunctionWrapper(clazz.getName), input))
-        udfExpr.get.dataType // Force it to check input data types.
-      } else if (classOf[AbstractGenericUDAFResolver].isAssignableFrom(clazz)) {
+        udfExpr.get.dataType
+      } else if (classOf[AbstractGenericUDAFResolver].isAssignableFrom(clazz)) {         /** [[AbstractGenericUDAFResolver]]  --->   [[HiveUDAFFunction]] */
         udfExpr = Some(HiveUDAFFunction(name, new HiveFunctionWrapper(clazz.getName), input))
-        udfExpr.get.dataType // Force it to check input data types.
-      } else if (classOf[UDAF].isAssignableFrom(clazz)) {
-        udfExpr = Some(HiveUDAFFunction(
-          name,
-          new HiveFunctionWrapper(clazz.getName),
-          input,
-          isUDAFBridgeRequired = true))
-        udfExpr.get.dataType // Force it to check input data types.
-      } else if (classOf[GenericUDTF].isAssignableFrom(clazz)) {
+        udfExpr.get.dataType
+      } else if (classOf[UDAF].isAssignableFrom(clazz)) {                                /** [[UDAF]]  --->   [[HiveUDAFFunction]] */
+        udfExpr = Some(HiveUDAFFunction(name, new HiveFunctionWrapper(clazz.getName), input, isUDAFBridgeRequired = true))
+        udfExpr.get.dataType
+      } else if (classOf[GenericUDTF].isAssignableFrom(clazz)) {                         /** [[GenericUDTF]]  --->   [[HiveGenericUDTF]] */
         udfExpr = Some(HiveGenericUDTF(name, new HiveFunctionWrapper(clazz.getName), input))
-        // Force it to check data types.
         udfExpr.get.asInstanceOf[HiveGenericUDTF].elementSchema
       }
     } catch {
