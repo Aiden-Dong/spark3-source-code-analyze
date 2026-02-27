@@ -180,6 +180,12 @@ object AnalysisContext {
   }
 }
 /**
+ * insert into test_db.test_table   => InsertIntoStatement(UnresulvedRelation )
+ * select                           => Project
+ *   col1,                          => UnresolvedAttribute
+ *   func(col2)                     => UnresolvedFunction
+ * from  test_db.test_table         => UnresulvedRelation
+ *
  * 提供逻辑查询计划分析器，使用 [[SessionCatalog]] 中的信息将 [[UnresolvedAttribute]] 和
  * [[UnresolvedRelation]] 转换为完全类型化的对象。
  */
@@ -264,24 +270,26 @@ class Analyzer(override val catalogManager: CatalogManager)
    */
   override def batches: Seq[Batch] = Seq(
 
-    Batch("Substitution", fixedPoint,    // SQL 优化，逻辑树替换
-      // 优化数据更新操作,以减少冗余计算或数据扫描
-      // (字段更新合并,‌表达式简化,‌列剪裁)
-      OptimizeUpdateFields,
-      // 主要用于处理 ‌公共表表达式（CTE）‌ 的逻辑替换，以优化查询执行效率
-      // （‌消除重复计算， ‌优化执行计划结构, ‌协调数据分布与属性）
-      CTESubstitution,
-      // 主要用于 ‌优化窗口函数（Window Function）的执行逻辑‌，通过替换或重构窗口计算步骤，减少冗余计算并提升查询性能。
-      // (消除冗余窗口计算, 窗口谓词下推优化,  窗口函数与普通聚合函数的协同优化)
-      WindowsSubstitution,
-      // 主要用于 ‌简化或消除查询中的 UNION 操作‌，以提升执行效率并减少计算开销。
-      // (消除冗余的 UNION 操作, 优先使用 UNION ALL 替代 UNION, 优化子查询与 UNION 的嵌套结构, 识别并移除无效 UNION 分支)
-      EliminateUnions,
-      // 主要用于 ‌处理查询中未解析的序数引用‌（如 ORDER BY、GROUP BY 中的列位置序号），将其替换为具体的列表达式，确保逻辑计划的正确性和执行效率。
-      // - 将 ORDER BY 1、GROUP BY 2 等基于列序号的隐式引用，转换为显式的列名或表达式‌
-      // - 替换语法树中未绑定的序数占位符，生成完全解析的逻辑算子树‌
-      // - 确保嵌套查询或联合查询中序数引用的准确性
-      SubstituteUnresolvedOrdinals),
+    // SQL 优化，逻辑树替换
+    Batch("Substitution", fixedPoint,
+        // 优化数据更新操作,以减少冗余计算或数据扫描
+        // (字段更新合并,‌表达式简化,‌列剪裁)
+        OptimizeUpdateFields,
+        // 主要用于处理 ‌公共表表达式（CTE）‌ 的逻辑替换，以优化查询执行效率
+        // （‌消除重复计算， ‌优化执行计划结构, ‌协调数据分布与属性）
+        CTESubstitution,
+        // 主要用于 ‌优化窗口函数（Window Function）的执行逻辑‌，通过替换或重构窗口计算步骤，减少冗余计算并提升查询性能。
+        // (消除冗余窗口计算, 窗口谓词下推优化,  窗口函数与普通聚合函数的协同优化)
+        WindowsSubstitution,
+        // 主要用于 ‌简化或消除查询中的 UNION 操作‌，以提升执行效率并减少计算开销。
+        // (消除冗余的 UNION 操作, 优先使用 UNION ALL 替代 UNION, 优化子查询与 UNION 的嵌套结构, 识别并移除无效 UNION 分支)
+        EliminateUnions,
+        // 主要用于 ‌处理查询中未解析的序数引用‌（如 ORDER BY、GROUP BY 中的列位置序号），将其替换为具体的列表达式，确保逻辑计划的正确性和执行效率。
+        // - 将 ORDER BY 1、GROUP BY 2 等基于列序号的隐式引用，转换为显式的列名或表达式‌
+        // - 替换语法树中未绑定的序数占位符，生成完全解析的逻辑算子树‌
+        // - 确保嵌套查询或联合查询中序数引用的准确性
+        SubstituteUnresolvedOrdinals
+    ),
 
     // 是否移除SQL 中所有的Hints (spark.sql.optimizer.disableHints)
     Batch("Disable Hints", Once, new ResolveHints.DisableHints),
@@ -556,8 +564,7 @@ class Analyzer(override val catalogManager: CatalogManager)
             DatetimeSub(l, r, TimeAdd(Cast(l, TimestampType), UnaryMinus(r, f)))
           case (DateType, _: YearMonthIntervalType) =>
             DatetimeSub(l, r, DateAddYMInterval(l, UnaryMinus(r, f)))
-          case (TimestampType | TimestampNTZType, _: YearMonthIntervalType) =>
-            DatetimeSub(l, r, TimestampAddYMInterval(l, UnaryMinus(r, f)))
+          case (TimestampType | TimestampNTZType, _: YearMonthIntervalType) =>            DatetimeSub(l, r, TimestampAddYMInterval(l, UnaryMinus(r, f)))
           case (CalendarIntervalType, CalendarIntervalType) |
                (_: DayTimeIntervalType, _: DayTimeIntervalType) => s
           case (_: NullType, _: AnsiIntervalType) =>
@@ -2245,7 +2252,6 @@ class Analyzer(override val catalogManager: CatalogManager)
                 "A lambda function should only be used in a higher order function. However, " +
                   s"its class is ${other.getClass.getCanonicalName}, which is not a " +
                   s"higher order function.")
-              // We don't support persistent high-order functions yet.
             }.getOrElse(throw QueryCompilationErrors.noSuchFunctionError(nameParts, u))
           }
 
